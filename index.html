@@ -1,0 +1,1990 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style></head><body>
+<title>Kingside Chess</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@1,6..96,500;1,6..96,700&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+  /* Layout: full-bleed 3D table; slim HUD bars pinned top and bottom; dialogs float over the board. */
+  :root {
+    --felt: #13201d;
+    --felt-deep: #0a1110;
+    --panel: rgba(17, 27, 25, 0.86);
+    --line: rgba(236, 226, 205, 0.14);
+    --ivory: #ece2cd;
+    --muted: #9aa69d;
+    --brass: #d2a85a;
+    --brass-ink: #1c1407;
+    --alert: #e0705a;
+    --font-display: 'Bodoni Moda', 'Didot', 'Bodoni 72', Georgia, serif;
+    --font-body: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body {
+    background: radial-gradient(120% 90% at 50% 38%, var(--felt) 0%, var(--felt-deep) 70%) var(--felt-deep);
+    color: var(--ivory);
+    font: 15px/1.45 var(--font-body);
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage { position: fixed; inset: 0; touch-action: none; }
+  #stage canvas { display: block; width: 100%; height: 100%; outline: none; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, input:focus-visible + span { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+  .bar {
+    position: fixed; left: 0; right: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px; justify-content: space-between;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .bar.top { top: 0; padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+  .bar.bottom { bottom: 0; padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); align-items: flex-end; }
+
+  .wordmark { font: italic 700 22px/1 var(--font-display); letter-spacing: 0.01em; color: var(--ivory); }
+  .wordmark small { display: block; font: 500 10px/1.2 var(--font-body); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-style: normal; margin-top: 4px; }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    font-weight: 500; font-size: 14px; white-space: nowrap;
+  }
+  .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brass); flex: none; }
+  .status[data-state="thinking"] .dot { animation: pulse 1s ease-in-out infinite; }
+  .status[data-state="check"] .dot { background: var(--alert); }
+  .status[data-state="idle"] .dot { background: var(--muted); }
+  @keyframes pulse { 50% { opacity: 0.25; transform: scale(0.7); } }
+
+  .tools { display: flex; gap: 8px; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .icon-btn:hover { border-color: rgba(210, 168, 90, 0.6); }
+  .icon-btn svg { width: 19px; height: 19px; stroke: var(--ivory); fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+  .tray {
+    display: flex; flex-direction: column; gap: 4px; min-width: 0;
+    padding: 10px 14px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .tray .label { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+  .tray .glyphs { font-size: 20px; line-height: 1; min-height: 20px; letter-spacing: -0.04em; overflow-wrap: anywhere; }
+  .tray .glyphs .adv { font: 500 12px var(--font-mono); color: var(--brass); letter-spacing: 0; margin-left: 6px; vertical-align: 3px; }
+  .tray.right { text-align: right; align-items: flex-end; }
+  .lastmove { font: 500 15px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); font: 400 13px var(--font-body); letter-spacing: 0; }
+
+  /* Dialogs */
+  .scrim {
+    position: fixed; inset: 0; z-index: 10; display: grid; place-items: center;
+    padding: 16px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px));
+    background: linear-gradient(180deg, rgba(8, 13, 12, 0.15), rgba(8, 13, 12, 0.6));
+  }
+  .card {
+    width: min(440px, 100%); max-height: 100%; overflow: auto;
+    padding: 28px 26px 24px; border-radius: 22px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  .eyebrow { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--brass); font-weight: 600; }
+  .card h1, .card h2 { margin: 0; font: italic 700 44px/1 var(--font-display); text-wrap: balance; }
+  .card h2 { font-size: 38px; }
+  .card p { margin: 0; color: var(--muted); max-width: 60ch; }
+  .head { display: flex; flex-direction: column; gap: 10px; }
+
+  fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  legend { padding: 0; margin-bottom: 10px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  .choice input { position: absolute; opacity: 0; pointer-events: none; }
+  .levels { display: grid; gap: 8px; }
+  .levels .choice span {
+    display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline;
+    padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); cursor: pointer;
+  }
+  .levels .choice b { font: italic 700 20px/1 var(--font-display); }
+  .levels .choice em { font-style: normal; color: var(--muted); font-size: 13px; }
+  .choice input:checked + span { border-color: var(--brass); background: rgba(210, 168, 90, 0.1); }
+  .sides { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .sides .choice span {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 11px 8px; border-radius: 12px; border: 1px solid var(--line); cursor: pointer; font-weight: 500;
+  }
+  .sides .choice i { font-style: normal; font-size: 20px; line-height: 1; }
+
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn {
+    flex: 1 1 auto; padding: 14px 18px; border-radius: 14px; font-weight: 600; font-size: 15px;
+    border: 1px solid var(--line); background: transparent;
+  }
+  .btn.primary { background: var(--brass); color: var(--brass-ink); border-color: var(--brass); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost:hover { border-color: rgba(236, 226, 205, 0.4); }
+
+  .promo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .promo button {
+    aspect-ratio: 1; max-width: 100%; border-radius: 16px; border: 1px solid var(--line); background: rgba(236, 226, 205, 0.04);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  }
+  .promo button i { font-style: normal; font-size: 40px; line-height: 1; }
+  .promo button small { font-size: 11px; color: var(--muted); }
+  .promo button:hover { border-color: var(--brass); }
+
+  .loading { display: flex; flex-direction: column; gap: 14px; }
+  .meter { height: 4px; border-radius: 4px; background: rgba(236, 226, 205, 0.1); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: var(--brass); transition: width 0.2s; }
+  .err { color: var(--alert); }
+
+  .modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .modes .choice span {
+    display: flex; flex-direction: column; gap: 2px; padding: 11px 14px; border-radius: 12px;
+    border: 1px solid var(--line); cursor: pointer;
+  }
+  .modes .choice b { font: italic 700 19px/1.1 var(--font-display); }
+  .modes .choice em { font-style: normal; color: var(--muted); font-size: 12px; }
+  .lobby { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 210px; overflow: auto; }
+  .lobby li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
+  .lobby img { width: 28px; height: 28px; border-radius: 50%; flex: none; }
+  .lobby .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .lobby .who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lobby .who small { color: var(--muted); font-size: 12px; }
+  .lobby button, .code-row button {
+    padding: 8px 14px; border-radius: 10px; border: 1px solid var(--brass); background: transparent; color: var(--brass); font-weight: 600;
+  }
+  .lobby .empty-row { color: var(--muted); font-size: 13px; border-style: dashed; }
+  .code-row { display: flex; gap: 8px; }
+  .code-row input {
+    flex: 1; min-width: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: rgba(236, 226, 205, 0.04); color: var(--ivory); font: 500 16px var(--font-mono); letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  .note { margin: 0; font-size: 13px; color: var(--muted); }
+  .note.err { color: var(--alert); }
+  .big-code { font: 500 40px/1 var(--font-mono); letter-spacing: 0.22em; color: var(--brass); font-variant-numeric: tabular-nums; }
+  .toast {
+    position: fixed; z-index: 20; left: 50%; transform: translateX(-50%);
+    bottom: calc(86px + env(safe-area-inset-bottom, 0px)); width: min(440px, calc(100% - 32px));
+    padding: 12px 16px; border-radius: 14px; background: var(--panel); border: 1px solid rgba(224, 112, 90, 0.5);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 14px;
+  }
+
+  .glyph { font-family: 'Segoe UI Symbol', 'Apple Symbols', 'DejaVu Sans', var(--font-body); font-variant-emoji: text; }
+
+  @media (max-width: 560px) {
+    .wordmark small { display: none; }
+    .wordmark { font-size: 19px; }
+    .status { font-size: 13px; padding: 7px 12px; }
+    .bar.top { flex-wrap: wrap; }
+    .tray { padding: 8px 11px; }
+    .tray .glyphs { font-size: 17px; }
+    .scrim { align-items: end; }
+    .card { padding: 22px 18px 18px; gap: 16px; }
+    .card h1 { font-size: 38px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .status[data-state="thinking"] .dot { animation: none; }
+  }
+</style>
+
+<div id="stage" aria-label="Chess board. Click a piece, then click a highlighted square to move."></div>
+
+<header class="bar top">
+  <div class="wordmark">Kingside<small>3D chess</small></div>
+  <div class="status" id="status" data-state="idle" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Loading pieces</span></div>
+  <div class="tools">
+    <button class="icon-btn" id="soundBtn" type="button" title="Sound" aria-label="Sound on" aria-pressed="true">
+      <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path id="soundOff" d="M17 9l5 6M22 9l-5 6" hidden/></svg>
+    </button>
+    <button class="icon-btn" id="viewBtn" type="button" title="Reset view" aria-label="Reset camera view">
+      <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+    </button>
+    <button class="icon-btn" id="newBtn" type="button" title="New game" aria-label="New game">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+  </div>
+</header>
+
+<footer class="bar bottom">
+  <div class="tray">
+    <span class="label">You captured</span>
+    <span class="glyphs glyph" id="capYou"><span class="empty">Nothing yet</span></span>
+  </div>
+  <div class="tray right">
+    <span class="label">Last move</span>
+    <span class="lastmove" id="lastMove"><span class="empty">None</span></span>
+  </div>
+</footer>
+
+<div class="scrim" id="loadDlg">
+  <div class="card loading">
+    <div class="head">
+      <span class="eyebrow">Setting up the board</span>
+      <h2>Kingside</h2>
+      <p id="loadText">Downloading the fighters, about 6 MB.</p>
+    </div>
+    <div class="meter"><i id="loadBar"></i></div>
+  </div>
+</div>
+
+<div class="scrim" id="setupDlg" hidden>
+  <form class="card" id="setupForm">
+    <div class="head">
+      <span class="eyebrow">New game</span>
+      <h1>Kingside</h1>
+      <p id="setupLead">You against the computer. Choose how strong it plays and which side you take.</p>
+    </div>
+    <fieldset>
+      <legend>Opponent</legend>
+      <div class="modes">
+        <label class="choice"><input type="radio" name="mode" id="mdAi" value="ai" checked><span><b>Computer</b><em>Play on this device</em></span></label>
+        <label class="choice"><input type="radio" name="mode" id="mdOnline" value="online"><span><b>Online friend</b><em>Each on your own device</em></span></label>
+      </div>
+    </fieldset>
+    <fieldset class="levels" id="levelSet">
+      <legend>Difficulty</legend>
+      <label class="choice"><input type="radio" name="level" id="lvEasy" value="easy"><span><b>Easy</b><em>Looks one move ahead and makes mistakes</em></span></label>
+      <label class="choice"><input type="radio" name="level" id="lvMedium" value="medium" checked><span><b>Medium</b><em>Looks three moves ahead</em></span></label>
+      <label class="choice"><input type="radio" name="level" id="lvHard" value="hard"><span><b>Hard</b><em>Deep search, about 2–3 seconds a move</em></span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Pieces</legend>
+      <div class="modes">
+        <label class="choice"><input type="radio" name="style" id="stFighters" value="fighters" checked><span><b>Fighters</b><em>Rigged warriors</em></span></label>
+        <label class="choice"><input type="radio" name="style" id="stClassic" value="classic"><span><b>Classic</b><em>Your original chess set</em></span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Play as</legend>
+      <div class="sides">
+        <label class="choice"><input type="radio" name="side" id="sdWhite" value="w" checked><span><i class="glyph">♔</i>White</span></label>
+        <label class="choice"><input type="radio" name="side" id="sdBlack" value="b"><span><i class="glyph">♚</i>Black</span></label>
+        <label class="choice"><input type="radio" name="side" id="sdRandom" value="r"><span><i class="glyph">⚄</i>Random</span></label>
+      </div>
+    </fieldset>
+    <fieldset id="onlineSet" hidden>
+      <legend>Games you can join</legend>
+      <ul class="lobby" id="lobbyList"><li class="empty-row">Looking for games…</li></ul>
+      <div class="code-row">
+        <input id="codeInput" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CODE" aria-label="Game code">
+        <button type="button" id="codeJoin">Join by code</button>
+      </div>
+      <p class="note" id="onlineNote"></p>
+    </fieldset>
+    <div class="actions">
+      <button class="btn ghost" type="button" id="setupCancel" hidden>Keep playing</button>
+      <button class="btn primary" type="submit" id="startBtn">Start game</button>
+    </div>
+  </form>
+</div>
+
+<div class="scrim" id="promoDlg" hidden>
+  <div class="card">
+    <div class="head">
+      <span class="eyebrow">Promotion</span>
+      <h2>Choose a piece</h2>
+    </div>
+    <div class="promo" id="promoBtns"></div>
+    <div class="actions"><button class="btn ghost" type="button" id="promoCancel">Cancel move</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="waitDlg" hidden>
+  <div class="card">
+    <div class="head">
+      <span class="eyebrow">Online game</span>
+      <h2>Waiting for a friend</h2>
+      <p>Your friend opens this page, taps <b>+</b>, picks <b>Online friend</b> and joins your game from the list, or types this code:</p>
+    </div>
+    <div class="big-code" id="waitCode"></div>
+    <p class="note">This page has to be shared with them as an Editor so they can make moves.</p>
+    <div class="actions"><button class="btn ghost" type="button" id="waitCancel">Cancel game</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="alert" hidden></div>
+
+<div class="scrim" id="endDlg" hidden>
+  <div class="card">
+    <div class="head">
+      <span class="eyebrow" id="endEyebrow"></span>
+      <h2 id="endTitle"></h2>
+      <p id="endText"></p>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" type="button" id="endView">See the board</button>
+      <button class="btn ghost" type="button" id="endSetup">Change level</button>
+      <button class="btn primary" type="button" id="endAgain">Play again</button>
+    </div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script type="importmap">
+  { "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+  } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const E = window.ChessEngine;
+const $ = (id) => document.getElementById(id);
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const GLYPH = { w: [' ', '♙', '♘', '♗', '♖', '♕', '♔'], b: [' ', '♟︎', '♞', '♝', '♜', '♛', '♚'] };
+const NAMES = [' ', 'Pawn', 'Knight', 'Bishop', 'Rook', 'Queen', 'King'];
+
+// ------------------------------------------------------------------ renderer + scene
+
+const stage = $('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enablePan = false;
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minPolarAngle = 0.12;
+controls.maxPolarAngle = 1.25;
+controls.rotateSpeed = 0.7;
+controls.autoRotateSpeed = 0.6;
+
+scene.add(new THREE.HemisphereLight(0xfff1dc, 0x16201d, 1.1));
+const key = new THREE.DirectionalLight(0xffe9c8, 2.1);
+key.position.set(4.5, 11, 6);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+Object.assign(key.shadow.camera, { left: -6.5, right: 6.5, top: 6.5, bottom: -6.5, near: 1, far: 30 });
+key.shadow.bias = -0.0004;
+key.shadow.radius = 4;
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xbcd6ff, 1.6);
+rim.position.set(-6, 7, -9);
+scene.add(rim);
+const fill = new THREE.DirectionalLight(0xffffff, 0.5);
+fill.position.set(-7, 4, 7);
+scene.add(fill);
+
+// ------------------------------------------------------------------ board
+
+// Square (file f, rank r) sits at x = f - 3.5, z = 3.5 - r. White plays from +z.
+const sqPos = (sq, y = 0) => new THREE.Vector3((sq & 7) - 3.5, y, 3.5 - (sq >> 3));
+const BORDER = 0.62, SIZE = 8 + BORDER * 2;
+
+function woodCanvas() {
+  const px = 2048, c = document.createElement('canvas');
+  c.width = c.height = px;
+  const g = c.getContext('2d'), unit = px / SIZE, off = BORDER * unit;
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const grain = (x, y, w, h, base, dark, vertical) => {
+    g.fillStyle = base; g.fillRect(x, y, w, h);
+    g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
+    for (let i = 0; i < 46; i++) {
+      g.strokeStyle = dark; g.globalAlpha = 0.05 + rnd() * 0.12; g.lineWidth = 0.6 + rnd() * 2.4;
+      const t = (vertical ? x + rnd() * w : y + rnd() * h), amp = 2 + rnd() * 6, freq = 0.004 + rnd() * 0.01, ph = rnd() * 6;
+      g.beginPath();
+      for (let s = 0; s <= (vertical ? h : w); s += 8) {
+        const d = Math.sin(s * freq + ph) * amp;
+        vertical ? (s ? g.lineTo(t + d, y + s) : g.moveTo(t + d, y + s)) : (s ? g.lineTo(x + s, t + d) : g.moveTo(x + s, t + d));
+      }
+      g.stroke();
+    }
+    g.restore(); g.globalAlpha = 1;
+  };
+  grain(0, 0, px, px, '#3b2417', '#120904', false);
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
+    const light = (r + f) % 2 === 1;
+    grain(off + f * unit, off + (7 - r) * unit, unit, unit, light ? '#d9b98a' : '#82593a', light ? '#8a6438' : '#3a2414', (r + f) % 2 === 0);
+  }
+  g.strokeStyle = 'rgba(210,168,90,0.75)'; g.lineWidth = 3;
+  g.strokeRect(off - 6, off - 6, 8 * unit + 12, 8 * unit + 12);
+  g.fillStyle = 'rgba(232,206,150,0.85)';
+  g.font = `600 ${Math.round(unit * 0.26)}px "Instrument Sans", system-ui, sans-serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const label = (text, cx, cy, rot) => { g.save(); g.translate(cx, cy); g.rotate(rot); g.fillText(text, 0, 0); g.restore(); };
+  for (let i = 0; i < 8; i++) {
+    const a = off + (i + 0.5) * unit, edge = off / 2;
+    label('abcdefgh'[i], a, px - edge, 0);
+    label('abcdefgh'[i], a, edge, Math.PI);
+    label(String(8 - i), edge, a, 0);
+    label(String(8 - i), px - edge, a, Math.PI);
+  }
+  return c;
+}
+
+const boardTex = new THREE.CanvasTexture(woodCanvas());
+boardTex.colorSpace = THREE.SRGBColorSpace;
+boardTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const sideMat = new THREE.MeshStandardMaterial({ color: 0x2c1a10, roughness: 0.55, metalness: 0.05 });
+const topMat = new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.42, metalness: 0.0 });
+const board = new THREE.Mesh(new THREE.BoxGeometry(SIZE, 0.34, SIZE), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
+board.position.y = -0.17;
+board.receiveShadow = true;
+scene.add(board);
+
+const pickPlane = new THREE.Mesh(new THREE.PlaneGeometry(8, 8), new THREE.MeshBasicMaterial({ visible: false }));
+pickPlane.rotation.x = -Math.PI / 2;
+pickPlane.position.y = 0.001;
+scene.add(pickPlane);
+
+const table = new THREE.Mesh(new THREE.CircleGeometry(40, 64), new THREE.ShadowMaterial({ opacity: 0.35 }));
+table.rotation.x = -Math.PI / 2;
+table.position.y = -0.341;
+table.receiveShadow = true;
+scene.add(table);
+
+// ------------------------------------------------------------------ highlights
+
+const marks = new THREE.Group();
+scene.add(marks);
+const flat = (geo, color, opacity) => {
+  const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.renderOrder = 1;
+  return m;
+};
+const squareGeo = new THREE.PlaneGeometry(1, 1), dotGeo = new THREE.CircleGeometry(0.15, 32), ringGeo = new THREE.RingGeometry(0.43, 0.5, 48);
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,90,60,0.95)'); grad.addColorStop(1, 'rgba(255,90,60,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+
+function clearMarks() { while (marks.children.length) marks.remove(marks.children[0]); }
+function addMark(mesh, sq, y) { mesh.position.copy(sqPos(sq, y)); marks.add(mesh); return mesh; }
+
+function drawMarks() {
+  clearMarks();
+  const last = game.history[game.history.length - 1];
+  if (last) {
+    addMark(flat(squareGeo, 0xe0b45e, 0.32), E.sqParse(last.uci.slice(0, 2)), 0.003);
+    addMark(flat(squareGeo, 0xe0b45e, 0.42), E.sqParse(last.uci.slice(2, 4)), 0.003);
+  }
+  if (game.pos.inCheck() && !game.over) {
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false }));
+    glow.rotation.x = -Math.PI / 2; glow.renderOrder = 1;
+    addMark(glow, game.pos.kings[game.pos.turn], 0.005);
+  }
+  if (selected >= 0) {
+    addMark(flat(squareGeo, 0xf3d28f, 0.55), selected, 0.004);
+    const seen = new Set();
+    for (const m of game.legal) {
+      if (E.from(m) !== selected || seen.has(E.to(m))) continue;
+      const to = E.to(m); seen.add(to);
+      const capture = game.pos.b[to] || E.flag(m) === E.F_EP;
+      addMark(capture ? flat(ringGeo, 0xf3d28f, 0.9) : flat(dotGeo, 0xf3d28f, 0.85), to, 0.006);
+    }
+  }
+}
+
+// ------------------------------------------------------------------ characters
+
+// One rigged Mixamo character per piece type, shared by both sides; each side is recolored white or black.
+// Each .txt is the character's GLB in base64 (artifacts serve text, not .glb).
+const CHARACTERS = {
+  [E.PAWN]: { file: 'characters/pawn.txt', height: 1.0, bytes: 106557 },
+  // The knight is a four-legged armored horse (rigged, no clips): sized to fit inside its square.
+  [E.KNIGHT]: { file: 'characters/horse.txt', height: 1.15, span: 0.95, bytes: 551745 },
+  [E.BISHOP]: { file: 'characters/bishop.txt', height: 1.28, bytes: 570765 },
+  [E.ROOK]: { file: 'characters/rook.txt', height: 1.22, bytes: 3196733 },
+  [E.QUEEN]: { file: 'characters/queen.txt', height: 1.36, bytes: 482621 },
+  [E.KING]: { file: 'characters/king.txt', height: 1.45, bytes: 704881 }
+};
+const CLIPS_BYTES = 299462;
+
+const types = {};          // piece type -> { scene, scale, footY, clips, head }
+const pieces = new Map();  // square -> piece root; updated the instant a move is made
+const pieceRoot = new THREE.Group();
+scene.add(pieceRoot);
+const pickers = [];        // invisible cylinders used for clicking pieces
+const live = new Set();    // pieces whose animation mixer runs this frame
+const effects = [];        // flying heads, blood, splats: each has update(dt) returning false when finished
+
+const pickMat = new THREE.MeshBasicMaterial({ visible: false });
+
+// Downloads with progress; a dropped connection is retried twice before giving up.
+async function fetchBytes(path, onBytes, tries = 3) {
+  let counted = 0;
+  try {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(`${path} returned ${res.status}`);
+    const reader = res.body.getReader(), chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value); counted += value.length; onBytes(value.length);
+    }
+    return await new Blob(chunks).arrayBuffer();
+  } catch (err) {
+    onBytes(-counted);
+    if (tries <= 1) throw err;
+    await new Promise((r) => setTimeout(r, 400));
+    return fetchBytes(path, onBytes, tries - 1);
+  }
+}
+
+function fromBase64(buf) {
+  const text = new TextDecoder().decode(buf).replace(/\s+/g, '');
+  const bytes = Uint8Array.fromBase64 ? Uint8Array.fromBase64(text) : Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+  return bytes.buffer;
+}
+
+function skinnedMeshes(root) {
+  const out = [];
+  root.traverse((o) => { if (o.isSkinnedMesh) out.push(o); });
+  return out;
+}
+
+// Clips were made on rigs of different sizes. In-place clips keep only rotations; the fall keeps its hip
+// track, scaled to this rig, so the body actually drops. Tracks for bones this rig lacks are dropped.
+function fitClip(json, root, restHipsY, keepHips) {
+  const clip = THREE.AnimationClip.parse(json);
+  clip.tracks = clip.tracks.filter((t) => {
+    const [node, prop] = [t.name.slice(0, t.name.lastIndexOf('.')), t.name.slice(t.name.lastIndexOf('.') + 1)];
+    if (!root.getObjectByName(node)) return false;
+    return prop !== 'position' || (keepHips && /Hips$/.test(node));
+  });
+  const hips = clip.tracks.find((t) => /Hips\.position$/.test(t.name));
+  if (hips && hips.values[1]) {
+    const k = restHipsY / hips.values[1];
+    hips.values = hips.values.map((v) => v * k);
+  }
+  return clip;
+}
+
+// Triangles skinned mostly to the head (or bones under it): the part that comes off.
+// The topmost bone named like a head: Mixamo's "mixamorigHead", Tripo's "Head_0" (not HeadTop_End, not Head_1).
+function isHeadBone(b) {
+  return b.isBone && /head/i.test(b.name) && !/head/i.test(b.parent?.name || '');
+}
+
+function findHead(root) {
+  return skinnedMeshes(root).map((m) => {
+    const bones = m.skeleton.bones, headBones = new Set();
+    const head = bones.find(isHeadBone);
+    if (head) head.traverse((c) => { const i = bones.indexOf(c); if (i >= 0) headBones.add(i); });
+    const si = m.geometry.attributes.skinIndex, sw = m.geometry.attributes.skinWeight, index = m.geometry.index;
+    if (!head || !si || !index) return null;
+    const isHead = new Uint8Array(si.count);
+    for (let v = 0; v < si.count; v++) {
+      let best = -1, w = -1;
+      for (let k = 0; k < 4; k++) { const x = sw.getComponent(v, k); if (x > w) { w = x; best = si.getComponent(v, k); } }
+      isHead[v] = headBones.has(best) ? 1 : 0;
+    }
+    const tris = [];
+    for (let i = 0; i < index.count; i += 3) {
+      const a = index.getX(i), b = index.getX(i + 1), c = index.getX(i + 2);
+      if (isHead[a] && isHead[b] && isHead[c]) tris.push(a, b, c);
+    }
+    return tris.length ? new Uint32Array(tris) : null;
+  });
+}
+
+async function loadCharacters() {
+  const total = Object.values(CHARACTERS).reduce((s, c) => s + c.bytes, CLIPS_BYTES);
+  let got = 0;
+  const bump = (n) => { got += n; $('loadBar').style.width = Math.min(100, (got / total) * 100) + '%'; };
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  const [clipJson, ...files] = await Promise.all([
+    fetchBytes('clips.json', bump).then((b) => JSON.parse(new TextDecoder().decode(b))),
+    ...Object.values(CHARACTERS).map((c) => fetchBytes(c.file, bump).then(fromBase64))
+  ]);
+  $('loadText').textContent = 'Placing the pieces.';
+  const keys = Object.keys(CHARACTERS).map(Number);
+  for (let i = 0; i < keys.length; i++) {
+    const type = keys[i], gltf = await loader.parseAsync(files[i], '');
+    const root = gltf.scene;
+    root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+    let hips = null;
+    root.traverse((o) => { if (!hips && o.isBone && /mixamorigHips$/.test(o.name)) hips = o; });
+    const clips = {}, beast = !hips;
+    if (!beast) for (const name of ['idle', 'slash', 'fall', 'wave']) clips[name] = fitClip(clipJson[name], root, hips.position.y, name === 'fall');
+    // Measure the character (humanoids in their idle stance) to size it and stand it on the board.
+    const probe = cloneSkinned(root), mixer = new THREE.AnimationMixer(probe);
+    if (!beast) { mixer.clipAction(clips.idle).play(); mixer.setTime(1); }
+    probe.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(probe, true), size = box.getSize(new THREE.Vector3());
+    const spec = CHARACTERS[type];
+    let scale = spec.height / size.y;
+    if (spec.span) scale = Math.min(scale, spec.span / Math.max(size.x, size.z));
+    const mid = box.getCenter(new THREE.Vector3());
+    types[type] = { scene: root, scale, beast, footY: box.min.y, midX: mid.x, midZ: mid.z, halfLen: size.z * scale / 2, clips, head: findHead(root) };
+  }
+}
+
+// Each side's characters are recolored: textures become shades of ivory for White and of near-black for
+// Black, so detail survives as light and dark; untextured parts take the side's plain tone.
+const SIDE_TONES = {
+  [E.WHITE]: { tint: new THREE.Color(0xf1ece2), lo: 0.55, hi: 1.0, plain: 0.92 },
+  [E.BLACK]: { tint: new THREE.Color(0xffffff), lo: 0.012, hi: 0.08, plain: 0.03 }
+};
+const sideMaterials = new Map();
+function sideMaterial(src, color) {
+  const key = src.uuid + ':' + color;
+  if (sideMaterials.has(key)) return sideMaterials.get(key);
+  const tone = SIDE_TONES[color], m = src.clone();
+  if (m.color) m.color.copy(tone.tint).multiplyScalar(tone.plain);
+  if (m.vertexColors) m.vertexColors = false;
+  if (m.map) {
+    m.color.setRGB(1, 1, 1);
+    m.onBeforeCompile = (shader) => {
+      shader.uniforms.sideTint = { value: tone.tint };
+      shader.uniforms.sideRange = { value: new THREE.Vector2(tone.lo, tone.hi) };
+      shader.fragmentShader = 'uniform vec3 sideTint;\nuniform vec2 sideRange;\n' + shader.fragmentShader.replace('#include <map_fragment>', `
+        vec4 sampledDiffuseColor = texture2D( map, vMapUv );
+        float lum = dot( sampledDiffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) );
+        diffuseColor.rgb *= sideTint * mix( sideRange.x, sideRange.y, lum );`);
+    };
+    m.customProgramCacheKey = () => 'side' + color;
+  }
+  if (color === E.BLACK && 'roughness' in m) { m.roughness = Math.min(m.roughness, 0.45); m.metalness = Math.max(m.metalness, 0.2); }
+  sideMaterials.set(key, m);
+  return m;
+}
+
+// ------------------------------------------------------------------ classic set
+
+// The original chess set (schach7_FullSet) with the custom Black_King, as an alternative to the fighters.
+// Loaded only when someone picks it. Pieces are found by their names in the set's file, mapped by where
+// each stands in its starting setup; the set's own white and black materials are kept.
+const CLASSIC_FILES = { set: { file: 'characters/classic-set.txt', bytes: 385165 }, king: { file: 'characters/classic-king.txt', bytes: 603009 } };
+const CLASSIC_MAP = {
+  Circle: E.WHITE | E.ROOK, Circle002: E.WHITE | E.KNIGHT, Circle004: E.WHITE | E.BISHOP,
+  Circle007: E.WHITE | E.QUEEN, Circle006: E.WHITE | E.KING, Kreis008: E.WHITE | E.PAWN,
+  Circle014: E.BLACK | E.ROOK, Circle012: E.BLACK | E.KNIGHT, Circle010: E.BLACK | E.BISHOP,
+  Circle008: E.BLACK | E.QUEEN, Circle009: E.BLACK | E.KING, Kreis001: E.BLACK | E.PAWN
+};
+const classicTypes = {};   // code -> { node, height }
+let classicLoad = null, style = 'fighters';
+
+const classicMats = new Map();
+function classicMat(m) {
+  if (!classicMats.has(m)) {
+    const c = m.clone();
+    if ('roughness' in c) { c.roughness = 0.32; c.metalness = 0; }
+    // The format conversion can leave a full-white glow on FBX materials; nothing in the set should glow.
+    if (c.emissive && !c.emissiveMap) c.emissive.setRGB(0, 0, 0);
+    c.side = THREE.DoubleSide;
+    classicMats.set(m, c);
+  }
+  return classicMats.get(m);
+}
+
+// A copy of src (in its file's world space) standing centred on its base at the origin.
+function standClassic(src, scale, yaw) {
+  const copy = src.clone(true);
+  src.updateWorldMatrix(true, false);
+  src.matrixWorld.decompose(copy.position, copy.quaternion, copy.scale);
+  copy.traverse((o) => {
+    if (!o.isMesh) return;
+    o.material = Array.isArray(o.material) ? o.material.map(classicMat) : classicMat(o.material);
+    o.castShadow = true; o.receiveShadow = true;
+  });
+  const box = new THREE.Box3().setFromObject(src), c = box.getCenter(new THREE.Vector3());
+  const inner = new THREE.Group(); inner.add(copy); inner.position.set(-c.x, -box.min.y, -c.z);
+  const node = new THREE.Group(); node.add(inner);
+  node.scale.setScalar(scale); node.rotation.y = yaw;
+  return { node, height: new THREE.Box3().setFromObject(node).getSize(new THREE.Vector3()).y };
+}
+
+function loadClassic() {
+  classicLoad ||= (async () => {
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    const [setBuf, kingBuf] = await Promise.all([CLASSIC_FILES.set, CLASSIC_FILES.king].map((f) => fetchBytes(f.file, () => {}).then(fromBase64)));
+    const set = (await loader.parseAsync(setBuf, '')).scene;
+    set.updateMatrixWorld(true);
+    // The set's board is 200 units across (25 per square); White stands at -x, so a quarter turn puts White at +z.
+    for (const [name, code] of Object.entries(CLASSIC_MAP)) {
+      const src = set.getObjectByName(name);
+      if (!src) throw new Error(`the classic set is missing "${name}"`);
+      classicTypes[code] = standClassic(src, 1 / 25, Math.PI / 2);
+    }
+    // The custom black king replaces the set's black king, at the set's king height.
+    const king = (await loader.parseAsync(kingBuf, '')).scene;
+    king.updateMatrixWorld(true);
+    const raw = new THREE.Box3().setFromObject(king).getSize(new THREE.Vector3()).y;
+    classicTypes[E.BLACK | E.KING] = standClassic(king, classicTypes[E.WHITE | E.KING].height / raw, 0);
+  })();
+  classicLoad.catch(() => { classicLoad = null; });
+  return classicLoad;
+}
+
+// Switches every piece on the board to the chosen style.
+async function setStyle(next) {
+  if (next === 'classic') {
+    $('startBtn').disabled = true;
+    const was = $('statusText').textContent;
+    setStatus('Loading the classic set', 'thinking');
+    try { await loadClassic(); }
+    catch (e) { toast(`The classic set didn't load: ${e.message}. Using the fighters.`); next = 'fighters'; }
+    setStatus(was, 'idle');
+    updateHud();
+    refreshSetup();
+  }
+  if (next === style) return;
+  style = next;
+  clearPieces();
+  syncPieces();
+  drawMarks();
+}
+
+function makeClassicPiece(code, sq) {
+  const t = classicTypes[code], piece = new THREE.Group();
+  piece.position.copy(sqPos(sq));
+  const char = new THREE.Group(), tilt = new THREE.Group();
+  tilt.add(t.node.clone(true));
+  char.add(tilt);
+  piece.add(char);
+  const height = t.height;
+  const picker = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, height + 0.1, 12), pickMat);
+  picker.position.y = (height + 0.1) / 2;
+  picker.userData.piece = piece;
+  piece.add(picker);
+  pickers.push(picker);
+  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: 0, motion: 0 };
+  pieceRoot.add(piece);
+  return piece;
+}
+
+function makePiece(code, sq) {
+  if (style === 'classic' && classicTypes[code]) return makeClassicPiece(code, sq);
+  const t = types[code & 7], color = code & E.BLACK;
+  const piece = new THREE.Group();
+  piece.position.copy(sqPos(sq));
+  // char is the turning holder; the model inside is centred on the square and stands on the board.
+  const char = new THREE.Group(), model = cloneSkinned(t.scene);
+  model.traverse((o) => {
+    if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map((m) => sideMaterial(m, color)) : sideMaterial(o.material, color);
+  });
+  model.scale.setScalar(t.scale);
+  model.position.set(-t.midX * t.scale, -t.footY * t.scale, -t.midZ * t.scale + t.halfLen);
+  const tilt = new THREE.Group();
+  tilt.position.z = -t.halfLen;
+  tilt.add(model);
+  char.add(tilt);
+  // Mixamo characters face +z; White plays from +z, so White's pieces turn to face -z.
+  char.rotation.y = color === E.WHITE ? Math.PI : 0;
+  piece.add(char);
+  const mixer = new THREE.AnimationMixer(model);
+  const actions = {};
+  for (const [name, clip] of Object.entries(t.clips)) actions[name] = mixer.clipAction(clip);
+  if (actions.idle) {
+    actions.idle.play();
+    mixer.setTime(Math.random() * t.clips.idle.duration); // each piece holds its own frozen moment of the stance
+  }
+  const height = CHARACTERS[code & 7].height;
+  const picker = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, height + 0.1, 12), pickMat);
+  picker.position.y = (height + 0.1) / 2;
+  picker.userData.piece = piece;
+  piece.add(picker);
+  pickers.push(picker);
+  piece.userData = { sq, code, char, tilt, beast: t.beast, mixer, actions, picker, facing: char.rotation.y, motion: 0 };
+  pieceRoot.add(piece);
+  return piece;
+}
+
+function dropPiece(piece) {
+  const i = pickers.indexOf(piece.userData.picker);
+  if (i >= 0) pickers.splice(i, 1);
+  live.delete(piece);
+  pieceRoot.remove(piece);
+}
+
+// Make the 3D pieces match the position exactly (used on load, new game and restore).
+function syncPieces() {
+  const b = game.pos.b;
+  for (const [sq, piece] of pieces) {
+    if (b[sq] !== piece.userData.code) { dropPiece(piece); pieces.delete(sq); }
+  }
+  for (let sq = 0; sq < 64; sq++) if (b[sq] && !pieces.has(sq)) pieces.set(sq, makePiece(b[sq], sq));
+}
+
+function clearPieces() {
+  for (const piece of pieces.values()) dropPiece(piece);
+  pieces.clear();
+}
+
+// ------------------------------------------------------------------ sound
+
+// Recorded-style effects (three takes each, generated with Magnific) are trimmed on playback to the part
+// worth hearing; if they can't load, the synthesized versions below stand in.
+const SAMPLES = {
+  slash: [{ file: 'slash1', start: 0, len: 0.25, peak: 0.43 }, { file: 'slash2', start: 0.01, len: 0.25, peak: 0.74 }, { file: 'slash3', start: 0.06, len: 0.28, peak: 0.72 }],
+  slide: [{ file: 'slide1', start: 0, len: 0.42, peak: 0.32 }, { file: 'slide2', start: 0.04, len: 0.48, peak: 0.27 }, { file: 'slide3', start: 0.18, len: 0.46, peak: 0.43 }],
+  ugh: [{ file: 'ugh1', start: 0.46, len: 0.36, peak: 0.37 }, { file: 'ugh2', start: 0, len: 0.3, peak: 0.31 }, { file: 'ugh3', start: 0, len: 0.26, peak: 0.43 }]
+};
+const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42 };
+const sampleBytes = Object.values(SAMPLES).flat().map((c) => fetchBytes('sounds/' + c.file + '.mp3', () => {}).catch(() => null));
+
+const sfx = (() => {
+  let ctx = null, master = null, noise = null, on = true;
+  const decoded = {}, lastPick = {};
+  try { on = localStorage.getItem('kingside.sound') !== 'off'; } catch {}
+  function unlock() {
+    if (!ctx) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; }
+      master = ctx.createGain(); master.gain.value = 0.8; master.connect(ctx.destination);
+      noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+      const d = noise.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      decodeSamples();
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+  }
+  async function decodeSamples() {
+    const clips = Object.entries(SAMPLES).flatMap(([kind, list]) => list.map((c) => ({ kind, ...c })));
+    const bytes = await Promise.all(sampleBytes);
+    await Promise.all(clips.map(async (c, i) => {
+      if (!bytes[i]) return;
+      try {
+        const buffer = await ctx.decodeAudioData(bytes[i].slice(0));
+        (decoded[c.kind] ||= []).push({ ...c, buffer });
+      } catch {}
+    }));
+  }
+  // Plays a random take (never the same one twice running), trimmed and faded out at its end.
+  function sample(kind, { rate = 1, delay = 0 } = {}) {
+    const list = decoded[kind];
+    if (!list || !list.length) return false;
+    let i = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && i === lastPick[kind]) i = (i + 1) % list.length;
+    lastPick[kind] = i;
+    const c = list[i], t = ctx.currentTime + delay, len = c.len / rate;
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = c.buffer; src.playbackRate.value = rate;
+    const level = LEVEL[kind] / c.peak * 0.5;
+    g.gain.setValueAtTime(level, t);
+    g.gain.setValueAtTime(level, t + Math.max(0, len - 0.05));
+    g.gain.linearRampToValueAtTime(0.0001, t + len);
+    src.connect(g).connect(master);
+    src.start(t, c.start, c.len + 0.02);
+    return true;
+  }
+  const ready = () => on && ctx && ctx.state === 'running';
+  function env(gain, t, attack, peak, end) {
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(peak, t + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + end);
+  }
+  function noiseSource(t, dur) {
+    const src = ctx.createBufferSource();
+    src.buffer = noise; src.playbackRate.value = 0.8 + Math.random() * 0.4;
+    src.start(t, Math.random() * 0.5, dur + 0.05);
+    return src;
+  }
+  // Air rushing past: band-passed noise sweeping up, swelling then fading.
+  function slide(seconds = 0.2) {
+    if (!ready()) return;
+    if (sample('slide', { rate: 1.8 + Math.random() * 0.15 })) return;
+    const t = ctx.currentTime, dur = Math.max(0.12, seconds);
+    const src = noiseSource(t, dur), bp = ctx.createBiquadFilter(), g = ctx.createGain();
+    bp.type = 'bandpass'; bp.Q.value = 1.4;
+    bp.frequency.setValueAtTime(420, t); bp.frequency.exponentialRampToValueAtTime(1700, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.32, t + dur * 0.4);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp).connect(g).connect(master);
+  }
+  // A blade cutting air: a hard bright noise crack falling in pitch, plus a short metallic ring.
+  function slash() {
+    if (!ready()) return;
+    if (sample('slash', { rate: 0.95 + Math.random() * 0.12 })) return;
+    const t = ctx.currentTime;
+    const src = noiseSource(t, 0.2), hp = ctx.createBiquadFilter(), bp = ctx.createBiquadFilter(), g = ctx.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 1800;
+    bp.type = 'bandpass'; bp.Q.value = 2.5;
+    bp.frequency.setValueAtTime(7500, t); bp.frequency.exponentialRampToValueAtTime(2200, t + 0.13);
+    env(g, t, 0.006, 0.9, 0.17);
+    src.connect(hp).connect(bp).connect(g).connect(master);
+    const ring = ctx.createOscillator(), rg = ctx.createGain();
+    ring.type = 'triangle';
+    ring.frequency.setValueAtTime(3400, t); ring.frequency.exponentialRampToValueAtTime(2300, t + 0.25);
+    env(rg, t, 0.004, 0.07, 0.28);
+    ring.connect(rg).connect(master);
+    ring.start(t); ring.stop(t + 0.3);
+  }
+  // A very short grunt: a falling buzzy voice through "uh" vowel formants.
+  function ugh(deep = 1) {
+    if (!ready()) return;
+    if (sample('ugh', { rate: 1 / deep, delay: 0.03 })) return;
+    const t = ctx.currentTime + 0.03, dur = 0.13;
+    const voice = ctx.createOscillator(), out = ctx.createGain(), lp = ctx.createBiquadFilter();
+    voice.type = 'sawtooth';
+    const f0 = (150 + Math.random() * 30) / deep;
+    voice.frequency.setValueAtTime(f0, t); voice.frequency.exponentialRampToValueAtTime(f0 * 0.62, t + dur);
+    lp.type = 'lowpass'; lp.frequency.value = 2600;
+    for (const [f, q, level] of [[640, 6, 1], [1150, 8, 0.55], [2400, 10, 0.18]]) {
+      const bp = ctx.createBiquadFilter(), fg = ctx.createGain();
+      bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q; fg.gain.value = level;
+      voice.connect(bp).connect(fg).connect(lp);
+    }
+    env(out, t, 0.012, 1.1, dur);
+    lp.connect(out).connect(master);
+    voice.start(t); voice.stop(t + dur + 0.02);
+  }
+  return {
+    unlock, slide, slash, ugh,
+    get loaded() { return Object.fromEntries(Object.entries(decoded).map(([k, v]) => [k, v.length])); },
+    get on() { return on; },
+    set on(v) { on = v; try { localStorage.setItem('kingside.sound', v ? 'on' : 'off'); } catch {} }
+  };
+})();
+addEventListener('pointerdown', sfx.unlock, true);
+addEventListener('keydown', sfx.unlock, true);
+
+// ------------------------------------------------------------------ animation
+
+// Test hook: set window.kingsideSlowMotion before load to watch the animations slowed down.
+const SLOW = window.kingsideSlowMotion || 1;
+const tweens = [];
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+function tween(ms, step, curve = ease) {
+  return new Promise((resolve) => {
+    ms = reduceMotion ? 1 : ms * SLOW;
+    tweens.push({ start: performance.now(), ms, step, curve, resolve });
+  });
+}
+function runTweens(now) {
+  for (let i = tweens.length - 1; i >= 0; i--) {
+    const t = tweens[i], k = Math.min(1, (now - t.start) / t.ms);
+    if (t.step(t.curve(k), k) === false) { tweens.splice(i, 1); t.resolve(false); continue; }
+    if (k >= 1) { tweens.splice(i, 1); t.resolve(true); }
+  }
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, reduceMotion ? 0 : ms * SLOW));
+
+function play(piece, name, { once = false, time = 0, speed = 1, fade = 0 } = {}) {
+  const { actions } = piece.userData, next = actions[name];
+  if (!next) return;
+  next.reset();
+  next.setLoop(once ? THREE.LoopOnce : THREE.LoopRepeat, Infinity);
+  next.clampWhenFinished = once;
+  next.time = time; next.timeScale = speed;
+  next.play();
+  for (const [n, a] of Object.entries(actions)) if (n !== name && a.isRunning()) fade ? a.fadeOut(fade) : a.stop();
+  if (fade) next.fadeIn(fade);
+  live.add(piece);
+}
+
+// Stop a piece's mixer so it holds its pose, unless it's selected or mid-move.
+function settle(piece) {
+  if (piece === selectedPiece() || piece.userData.busy) return;
+  live.delete(piece);
+}
+
+function angleTo(from, to) { return Math.atan2(to.x - from.x, to.z - from.z); }
+function turnTo(piece, yaw, ms) {
+  const char = piece.userData.char, start = char.rotation.y;
+  let d = yaw - start;
+  d = Math.atan2(Math.sin(d), Math.cos(d));
+  return tween(ms, (e) => { char.rotation.y = start + d * e; });
+}
+
+// Moves a piece to a square. A newer move of the same piece cancels this one mid-way.
+function glide(piece, toSq, ms) {
+  const id = ++piece.userData.motion, a = piece.position.clone(), b = sqPos(toSq);
+  piece.userData.sq = toSq;
+  if (!piece.userData.static) piece.userData.char.rotation.y = angleTo(a, b);
+  return tween(ms, (e) => {
+    if (piece.userData.motion !== id) return false;
+    piece.position.lerpVectors(a, b, e);
+  }, easeOut);
+}
+
+async function quietMove(piece, toSq, silent) {
+  const dist = piece.position.distanceTo(sqPos(toSq));
+  if (!silent) sfx.slide((55 + dist * 10) / 1000);
+  play(piece, 'idle', { time: Math.random() });
+  const id = piece.userData.motion + 1;
+  piece.userData.busy = true;
+  if (await glide(piece, toSq, 55 + dist * 10) && piece.userData.motion === id) {
+    await turnTo(piece, piece.userData.facing, 60);
+    if (piece.userData.motion === id) { piece.userData.busy = false; settle(piece); }
+  }
+}
+
+// One motion: the attacker slides through the victim with the strike landing on contact.
+async function killMove(attacker, victim, toSq) {
+  const dist = attacker.position.distanceTo(sqPos(toSq));
+  const ms = Math.min(160, 70 + dist * 13);
+  sfx.slide(ms / 1000);
+  const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
+  victim.userData.motion++; // stop it if it was still sliding, and put it on its square
+  victim.position.copy(sqPos(victim.userData.sq));
+  // Slash clip: wind-up starts at 0.24s, the cut lands around 0.46s; stretch that span over the slide.
+  if (attacker.userData.static) {
+    const tilt = attacker.userData.tilt;
+    attacker.userData.char.rotation.y = angleTo(attacker.position, sqPos(toSq));
+    tween(ms * 0.55, (e) => { tilt.rotation.x = -0.35 * e; }, easeOut)
+      .then(() => tween(ms * 0.3, (e) => { tilt.rotation.x = -0.35 + 0.9 * e; }))
+      .then(() => tween(90, (e) => { tilt.rotation.x = 0.55 * (1 - e); }));
+  } else if (attacker.userData.beast) {
+    const tilt = attacker.userData.tilt;
+    tween(ms * 0.6, (e) => { tilt.rotation.x = -0.75 * e; }, easeOut)
+      .then(() => tween(ms * 0.3, (e) => { tilt.rotation.x = -0.75 * (1 - e); }))
+      .then(() => { tilt.rotation.x = 0; });
+  } else play(attacker, 'slash', { once: true, time: 0.24, speed: (0.46 - 0.24) / (ms / 1000) });
+  const id = attacker.userData.motion + 1;
+  attacker.userData.busy = true;
+  const arrived = glide(attacker, toSq, ms);
+  await wait(ms * 0.82);
+  sfx.slash();
+  sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15);
+  behead(victim, dir);
+  await arrived;
+  if (attacker.userData.motion !== id) return;
+  await wait(40);
+  if (attacker.userData.motion !== id) return;
+  play(attacker, 'idle', { fade: 0.08, time: Math.random() });
+  await turnTo(attacker, attacker.userData.facing, 70);
+  if (attacker.userData.motion === id) { attacker.userData.busy = false; settle(attacker); }
+}
+
+// ------------------------------------------------------------------ the kill
+
+function dotTexture(paint) {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  paint(c.getContext('2d'));
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const dropTex = dotTexture((g) => {
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.6, 'rgba(255,255,255,0.9)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+});
+function splatTexture() {
+  return dotTexture((g) => {
+    g.fillStyle = 'rgb(150, 10, 14)';
+    const blob = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); };
+    blob(64, 64, 22 + Math.random() * 8);
+    for (let i = 0; i < 26; i++) {
+      const a = Math.random() * Math.PI * 2, d = 18 + Math.random() * 36;
+      blob(64 + Math.cos(a) * d, 64 + Math.sin(a) * d, 2 + Math.random() * (d < 34 ? 10 : 5));
+    }
+  });
+}
+const splatTextures = [splatTexture(), splatTexture(), splatTexture()];
+
+function bloodSpray(at, dir, count, force) {
+  const pos = new Float32Array(count * 3), vel = [];
+  for (let i = 0; i < count; i++) {
+    pos.set([at.x, at.y, at.z], i * 3);
+    vel.push(new THREE.Vector3(
+      dir.x * (0.6 + Math.random() * 2.4) * force + (Math.random() - 0.5) * 2.2,
+      (1.2 + Math.random() * 3.6) * force,
+      dir.z * (0.6 + Math.random() * 2.4) * force + (Math.random() - 0.5) * 2.2));
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xa00c0e, map: dropTex, size: 0.085, transparent: true, depthWrite: false, alphaTest: 0.05 });
+  const points = new THREE.Points(geo, mat);
+  points.frustumCulled = false;
+  scene.add(points);
+  let t = 0;
+  effects.push({ update(dt) {
+    t += dt;
+    for (let i = 0; i < count; i++) {
+      const v = vel[i];
+      if (pos[i * 3 + 1] <= 0.012) { pos[i * 3 + 1] = 0.012; continue; }
+      v.y -= 15 * dt;
+      pos[i * 3] += v.x * dt; pos[i * 3 + 1] += v.y * dt; pos[i * 3 + 2] += v.z * dt;
+    }
+    geo.attributes.position.needsUpdate = true;
+    mat.opacity = Math.max(0, 1 - Math.max(0, t - 0.5) / 1.2);
+    if (t > 1.7) { scene.remove(points); geo.dispose(); mat.dispose(); return false; }
+    return true;
+  } });
+}
+
+function splat(at) {
+  const mat = new THREE.MeshBasicMaterial({ map: splatTextures[Math.floor(Math.random() * 3)], transparent: true, depthWrite: false, opacity: 0.92 });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  mesh.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2);
+  mesh.position.set(at.x, 0.0015, at.z);
+  mesh.renderOrder = 1;
+  scene.add(mesh);
+  let t = 0;
+  effects.push({ update(dt) {
+    t += dt;
+    mesh.scale.setScalar(0.35 + 1.15 * easeOut(Math.min(1, t / 0.14)));
+    mat.opacity = 0.92 * (1 - Math.max(0, t - 0.6) / 1.6);
+    if (t > 2.2) { scene.remove(mesh); mesh.geometry.dispose(); mat.dispose(); return false; }
+    return true;
+  } });
+}
+
+// Lifts the head triangles off the posed body as their own mesh, then hides them on the body.
+function cutHead(victim) {
+  const t = types[victim.userData.code & 7], meshes = skinnedMeshes(victim.userData.char);
+  victim.updateMatrixWorld(true);
+  const v = new THREE.Vector3(), center = new THREE.Vector3(), parts = [];
+  let n = 0;
+  t.head.forEach((tris, i) => {
+    if (!tris) return;
+    const m = meshes[i], uv = m.geometry.attributes.uv;
+    const pos = new Float32Array(tris.length * 3), uvs = uv ? new Float32Array(tris.length * 2) : null;
+    for (let k = 0; k < tris.length; k++) {
+      m.getVertexPosition(tris[k], v).applyMatrix4(m.matrixWorld);
+      pos[k * 3] = v.x; pos[k * 3 + 1] = v.y; pos[k * 3 + 2] = v.z;
+      center.add(v); n++;
+      if (uvs) { uvs[k * 2] = uv.getX(tris[k]); uvs[k * 2 + 1] = uv.getY(tris[k]); }
+    }
+    parts.push({ pos, uvs, material: m.material });
+  });
+  let neck = null;
+  victim.userData.char.traverse((o) => { if (!neck && isHeadBone(o)) neck = o; });
+  const neckAt = neck ? neck.getWorldPosition(new THREE.Vector3()) : victim.position.clone().setY(1);
+  if (neck) neck.scale.setScalar(0.0001);
+  if (!n) return { head: null, neckAt };
+  center.divideScalar(n);
+  const head = new THREE.Group();
+  for (const p of parts) {
+    for (let k = 0; k < p.pos.length; k += 3) { p.pos[k] -= center.x; p.pos[k + 1] -= center.y; p.pos[k + 2] -= center.z; }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(p.pos, 3));
+    if (p.uvs) g.setAttribute('uv', new THREE.BufferAttribute(p.uvs, 2));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, p.material);
+    mesh.castShadow = true;
+    head.add(mesh);
+  }
+  head.position.copy(center);
+  scene.add(head);
+  return { head, neckAt };
+}
+
+// Unrigged pieces: triangles above "neck" height (two thirds up) become the head; the body keeps the rest.
+function cutStaticHead(victim) {
+  victim.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(victim.userData.tilt);
+  const cutY = box.min.y + (box.max.y - box.min.y) * 0.66;
+  const center = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const parts = [];
+  let n = 0;
+  victim.userData.tilt.traverse((m) => {
+    if (!m.isMesh) return;
+    const g = m.geometry, pos = g.attributes.position, uv = g.attributes.uv;
+    const idx = g.index ? (i) => g.index.getX(i) : (i) => i, count = g.index ? g.index.count : pos.count;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    const groups = g.groups.length ? g.groups : [{ start: 0, count, materialIndex: 0 }];
+    const bodyIndex = [], bodyGroups = [], heads = new Map();
+    for (const grp of groups) {
+      const groupStart = bodyIndex.length;
+      for (let i = grp.start; i < Math.min(count, grp.start + grp.count); i += 3) {
+        const i0 = idx(i), i1 = idx(i + 1), i2 = idx(i + 2);
+        a.fromBufferAttribute(pos, i0).applyMatrix4(m.matrixWorld);
+        b.fromBufferAttribute(pos, i1).applyMatrix4(m.matrixWorld);
+        c.fromBufferAttribute(pos, i2).applyMatrix4(m.matrixWorld);
+        if ((a.y + b.y + c.y) / 3 > cutY) {
+          const h = heads.get(grp.materialIndex) || { pos: [], uv: [] };
+          heads.set(grp.materialIndex, h);
+          for (const [v, k] of [[a, i0], [b, i1], [c, i2]]) {
+            h.pos.push(v.x, v.y, v.z); center.add(v); n++;
+            if (uv) h.uv.push(uv.getX(k), uv.getY(k));
+          }
+        } else bodyIndex.push(i0, i1, i2);
+      }
+      bodyGroups.push({ start: groupStart, count: bodyIndex.length - groupStart, materialIndex: grp.materialIndex });
+    }
+    if (!heads.size) return;
+    const body = new THREE.BufferGeometry();
+    for (const [k, attr] of Object.entries(g.attributes)) body.setAttribute(k, attr);
+    body.setIndex(bodyIndex);
+    for (const grp of bodyGroups) body.addGroup(grp.start, grp.count, grp.materialIndex);
+    m.geometry = body;
+    for (const [mi, h] of heads) parts.push({ ...h, material: mats[mi] || mats[0] });
+  });
+  const neckAt = new THREE.Vector3(victim.position.x, cutY, victim.position.z);
+  if (!n) return { head: null, neckAt };
+  center.divideScalar(n);
+  const head = new THREE.Group();
+  for (const p of parts) {
+    const arr = new Float32Array(p.pos);
+    for (let k = 0; k < arr.length; k += 3) { arr[k] -= center.x; arr[k + 1] -= center.y; arr[k + 2] -= center.z; }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+    if (p.uv.length) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(p.uv), 2));
+    g.computeVertexNormals();
+    const mesh = new THREE.Mesh(g, p.material);
+    mesh.castShadow = true;
+    head.add(mesh);
+  }
+  head.position.copy(center);
+  scene.add(head);
+  return { head, neckAt };
+}
+
+function behead(victim, dir) {
+  const { head, neckAt } = victim.userData.static ? cutStaticHead(victim) : cutHead(victim);
+  bloodSpray(neckAt, dir, 120, 1);
+  splat(victim.position);
+  if (head) {
+    // The head flies up and off the board, spinning, trailing a little blood.
+    const vel = new THREE.Vector3(dir.x * 7 + (Math.random() - 0.5) * 2, 4.8 + Math.random() * 1.5, dir.z * 7 + (Math.random() - 0.5) * 2);
+    const spin = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+    const spinRate = 14 + Math.random() * 8, q = new THREE.Quaternion();
+    let t = 0, trail = 0;
+    effects.push({ update(dt) {
+      t += dt;
+      vel.y -= 16 * dt;
+      head.position.addScaledVector(vel, dt);
+      head.quaternion.premultiply(q.setFromAxisAngle(spin, spinRate * dt));
+      if (t < 0.35 && (trail += dt) > 0.06) { trail = 0; bloodSpray(head.position, dir, 10, 0.5); }
+      if (t > 2.2 || head.position.y < -10) {
+        scene.remove(head);
+        head.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+        return false;
+      }
+      return true;
+    } });
+  }
+  // The body drops (fall clip at double speed), gets knocked back a little, then sinks through the board.
+  if (victim.userData.beast || victim.userData.static) {
+    const tilt = victim.userData.tilt, side = Math.random() < 0.5 ? 1 : -1;
+    tween(170, (e) => { tilt.rotation.z = side * 1.45 * e; }, easeOut);
+  } else play(victim, 'fall', { once: true, speed: 4.5 });
+  const start = victim.position.clone(), back = start.clone().addScaledVector(dir, 0.35);
+  tween(130, (e) => { victim.position.lerpVectors(start, back, e); }, easeOut)
+    .then(() => wait(60))
+    .then(() => tween(200, (e) => { victim.position.y = -1.8 * e; }))
+    .then(() => dropPiece(victim));
+}
+
+// Starts the 3D side of a move. Board state is already updated; nothing here holds up play.
+function animateMove(m, captured) {
+  const from = E.from(m), to = E.to(m), flag = E.flag(m);
+  const capSq = flag === E.F_EP ? to + (game.pos.turn === E.BLACK ? -8 : 8) : to; // turn is already the next side
+  let mover = pieces.get(from);
+  const victim = captured ? pieces.get(capSq) : null;
+  pieces.delete(from);
+  if (victim) { pieces.delete(capSq); const i = pickers.indexOf(victim.userData.picker); if (i >= 0) pickers.splice(i, 1); }
+  if (E.promo(m) && mover) {
+    // The pawn becomes the new piece on the spot, then makes the move.
+    const at = mover.position.clone();
+    dropPiece(mover);
+    mover = makePiece(game.pos.b[to], from);
+    mover.position.copy(at);
+    tween(260, (e) => { mover.scale.setScalar(0.4 + 0.6 * e); }, easeOut);
+  }
+  if (mover) {
+    pieces.set(to, mover);
+    if (victim) killMove(mover, victim, to); else quietMove(mover, to);
+  }
+  if (flag === E.F_CASTLE) {
+    const [rf, rt] = to > from ? [from + 3, from + 1] : [from - 4, from - 1];
+    const rook = pieces.get(rf);
+    if (rook) { pieces.delete(rf); pieces.set(rt, rook); quietMove(rook, rt, true); }
+  }
+}
+
+function victoryWave(color) {
+  for (const piece of pieces.values()) {
+    if ((piece.userData.code & E.BLACK) !== color) continue;
+    piece.userData.motion++;
+    if (piece.userData.static) {
+      const delay = Math.random() * 200;
+      wait(delay).then(() => tween(900, (e, k) => { piece.position.y = Math.abs(Math.sin(k * Math.PI * 3)) * 0.35; }, (k) => k))
+        .then(() => { piece.position.y = 0; });
+    }
+    if (piece.userData.beast) {
+      const tilt = piece.userData.tilt;
+      tween(300, (e) => { tilt.rotation.x = -0.6 * e; }, easeOut).then(() => tween(500, (e) => { tilt.rotation.x = -0.6 * (1 - e); }));
+    }
+    play(piece, 'wave', { time: Math.random() * 0.5, fade: 0.25 });
+    turnTo(piece, piece.userData.facing, 200);
+  }
+}
+
+function selectedPiece() { return selected >= 0 ? pieces.get(selected) : null; }
+
+// ------------------------------------------------------------------ game
+
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+let settings = { level: 'medium', side: 'w' };
+try { Object.assign(settings, JSON.parse(localStorage.getItem('kingside.settings') || '{}')); } catch {}
+// mode: 'ai' (vs computer) or 'online' (vs a friend through the shared database).
+const game = { pos: new E.Position(START_FEN), legal: [], history: [], keys: [], human: E.WHITE, level: 'medium', mode: 'ai', over: null, started: false, busy: false, id: 0 };
+let selected = -1, pendingPromo = null;
+
+function resetBoard() {
+  game.id++;
+  game.pos = new E.Position(START_FEN);
+  game.history = []; game.keys = [game.pos.key()];
+  game.legal = game.pos.legal();
+  game.over = null; game.busy = false;
+  selected = -1;
+  clearPieces();
+  syncPieces();
+  drawMarks();
+}
+
+function newGame(side, level) {
+  leaveOnline(true);
+  game.mode = 'ai';
+  resetBoard();
+  game.human = side === 'b' ? E.BLACK : E.WHITE;
+  game.level = level; game.started = true;
+  updateHud();
+  aimCamera(true);
+  controls.autoRotate = false;
+  maybeComputerMove();
+}
+
+function gameOverCheck() {
+  const p = game.pos;
+  if (!game.legal.length) return p.inCheck() ? { kind: 'mate', winner: p.turn ^ E.BLACK } : { kind: 'stalemate' };
+  if (p.half >= 100) return { kind: 'fifty' };
+  const k = game.keys[game.keys.length - 1];
+  if (game.keys.filter((x) => x === k).length >= 3) return { kind: 'repetition' };
+  if (p.insufficient()) return { kind: 'material' };
+  return null;
+}
+
+async function playMove(m, animate = true) {
+  const p = game.pos, color = p.turn;
+  const san = p.san(m, game.legal);
+  const captured = E.flag(m) === E.F_EP ? (E.PAWN | (color ^ E.BLACK)) : p.b[E.to(m)];
+  const moveNo = p.full;
+  p.make(m);
+  game.history.push({ uci: E.uci(m), san, captured, color, moveNo });
+  game.keys.push(p.key());
+  game.legal = p.legal();
+  setSelected(-1);
+  // The move counts now; the animation plays alongside whatever happens next.
+  if (animate) animateMove(m, captured); else syncPieces();
+  game.over = gameOverCheck();
+  drawMarks();
+  updateHud();
+  if (game.over) {
+    if (!animate) { showEnd(); return; }
+    if (game.over.kind === 'mate') setTimeout(() => victoryWave(game.over.winner), 500);
+    setTimeout(showEnd, 1500);
+  }
+}
+
+// The search runs in a worker so the board keeps animating; if the worker can't start or stalls,
+// the same search runs on the page instead.
+let worker = null;
+const pending = new Map();
+function onMainThread(fen, level) { return new Promise((r) => setTimeout(() => r(E.bestMove(fen, level)), 30)); }
+try {
+  worker = new Worker('engine.js');
+  worker.onmessage = (e) => { const p = pending.get(e.data.id); if (p) { pending.delete(e.data.id); p(e.data.move); } };
+  worker.onerror = () => {
+    worker = null;
+    for (const [id, p] of pending) { pending.delete(id); p(null); }
+  };
+} catch { worker = null; }
+
+async function askEngine(fen, level) {
+  if (!worker) return onMainThread(fen, level);
+  const id = Math.random();
+  const reply = await new Promise((resolve) => {
+    pending.set(id, resolve);
+    setTimeout(() => { if (pending.delete(id)) resolve(null); }, 12000);
+    worker.postMessage({ id, fen, level });
+  });
+  return reply || onMainThread(fen, level);
+}
+
+async function maybeComputerMove() {
+  if (game.mode !== 'ai' || game.over || !game.started || game.pos.turn === game.human) return;
+  const id = game.id, started = performance.now();
+  game.busy = true; updateHud();
+  const uci = await askEngine(game.pos.fen(), game.level);
+  const pause = 60 - (performance.now() - started);
+  if (pause > 0) await new Promise((r) => setTimeout(r, pause));
+  if (id !== game.id) return;
+  const m = game.legal.find((x) => E.uci(x) === uci) || game.legal[0];
+  game.busy = false;
+  await playMove(m);
+}
+
+function humanMove(m) {
+  playMove(m);
+  if (game.mode === 'online') sendMoves(); else maybeComputerMove();
+}
+
+// The selected piece comes alive in its idle loop; everyone else holds their stance.
+function setSelected(sq) {
+  const before = selectedPiece();
+  selected = sq;
+  const now = selectedPiece();
+  if (before && before !== now) settle(before);
+  if (now && now !== before && now.userData.actions.idle) play(now, 'idle', { time: now.userData.actions.idle.time });
+}
+
+function onSquare(sq) {
+  if (!game.started || game.over || game.busy || game.pos.turn !== game.human) return;
+  if (game.mode === 'online' && !(online.game && online.game.status === 'playing' && online.game.mine !== null)) return;
+  const piece = game.pos.b[sq];
+  if (selected >= 0) {
+    const options = game.legal.filter((m) => E.from(m) === selected && E.to(m) === sq);
+    if (options.length > 1) { openPromotion(options); return; }
+    if (options.length === 1) { humanMove(options[0]); return; }
+  }
+  setSelected(piece && (piece & E.BLACK) === game.human && game.legal.some((m) => E.from(m) === sq) ? sq : -1);
+  drawMarks();
+}
+
+// ------------------------------------------------------------------ online
+
+// Games live in the artifact's shared database as games/<CODE>:
+//   { code, white, black (viewer ids or null), moves: [uci...], status: 'waiting'|'playing'|'over',
+//     resigned (0|8, optional), rematch (code, optional), createdAt, updatedAt }
+// Each device replays the move list through the rules engine, so an illegal move never lands.
+const online = { db: null, user: null, me: null, canWrite: null, ready: false, game: null, lobbyUnsub: null, names: {} };
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function initOnline() {
+  if (!window.claude?.use) return;
+  const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+  online.db = db; online.user = user;
+  if (user) {
+    online.me = await user.id();
+    online.canWrite = await user.can('data.write');
+  }
+  online.ready = !!(db && online.me && online.canWrite !== false);
+  refreshSetup();
+}
+
+function onlineBlocker() {
+  if (!online.db || !online.user) return 'Online play needs this page opened on claude.ai while signed in.';
+  if (!online.me) return 'Online play needs you signed in to claude.ai.';
+  if (online.canWrite === false) return 'You can watch games, but to play, the owner has to share this page with you as an Editor.';
+  return '';
+}
+
+async function nameOf(ids) {
+  const list = ids.filter(Boolean);
+  if (!online.user || !list.length) return {};
+  const ps = await online.user.profiles(list);
+  for (const id of list) online.names[id] = ps[id]?.name || '';
+  return ps;
+}
+const opponentName = () => {
+  const g = online.game;
+  if (!g) return 'Your opponent';
+  const id = g.mine === E.WHITE ? g.black : g.white;
+  return (id && online.names[id]) || 'Your opponent';
+};
+
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text; t.hidden = false;
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => { t.hidden = true; }, 7000);
+}
+
+function ago(ms) {
+  const min = Math.round((Date.now() - ms) / 60000);
+  return min < 1 ? 'just now' : min < 60 ? `${min} min ago` : `${Math.round(min / 60)} h ago`;
+}
+
+// The lobby lists open games (to join) and your unfinished ones (to resume) while the setup card is open.
+function watchLobby(on) {
+  if (!on || !online.ready) { if (online.lobbyUnsub) { online.lobbyUnsub(); online.lobbyUnsub = null; } return; }
+  if (online.lobbyUnsub) return;
+  online.lobbyUnsub = online.db.collection('games').orderBy('createdAt', 'desc').limit(40)
+    .onSnapshot(renderLobby, () => { online.lobbyUnsub = null; $('lobbyList').innerHTML = '<li class="empty-row">The game list could not load. Reopen this card to try again.</li>'; });
+}
+
+async function renderLobby(snap) {
+  const me = online.me, rows = [];
+  for (const doc of snap.docs) {
+    const d = doc.data();
+    if (!d || typeof d.code !== 'string' || Date.now() - (d.updatedAt || 0) > 2 * 864e5) continue;
+    const mine = d.white === me || d.black === me;
+    if (mine && d.status !== 'over') rows.push({ d, action: 'Resume' });
+    else if (!mine && d.status === 'waiting') rows.push({ d, action: 'Join' });
+  }
+  const ps = await nameOf(rows.flatMap(({ d }) => [d.white, d.black]));
+  const list = $('lobbyList');
+  list.innerHTML = '';
+  if (!rows.length) {
+    list.innerHTML = '<li class="empty-row">No open games right now. Create one and tell your friend the code.</li>';
+    return;
+  }
+  for (const { d, action } of rows) {
+    const host = d.white && d.white !== me ? d.white : d.black && d.black !== me ? d.black : null;
+    const li = document.createElement('li');
+    const img = document.createElement('img');
+    img.alt = '';
+    if (host && ps[host]?.avatarUrl) img.src = ps[host].avatarUrl; else img.hidden = true;
+    const who = document.createElement('div'); who.className = 'who';
+    const b = document.createElement('b'), small = document.createElement('small');
+    if (action === 'Join') {
+      b.textContent = `${(host && ps[host]?.name) || 'Someone'} wants a game`;
+      small.textContent = `You play ${d.white ? 'Black' : 'White'} · ${d.code} · ${ago(d.createdAt)}`;
+    } else {
+      const myColor = d.white === me ? 'White' : 'Black';
+      b.textContent = d.status === 'waiting' ? 'Your game, waiting for a friend' : `vs ${(host && ps[host]?.name) || 'your friend'}`;
+      small.textContent = `You play ${myColor} · ${(d.moves || []).length} moves · ${ago(d.updatedAt)}`;
+    }
+    who.append(b, small);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.textContent = action;
+    btn.onclick = () => (action === 'Join' ? joinOnline(d.code) : enterOnline(d.code));
+    li.append(img, who, btn);
+    list.appendChild(li);
+  }
+}
+
+async function createOnline(side) {
+  if (!online.ready) return;
+  const code = Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+  const now = Date.now();
+  try {
+    await online.db.doc('games/' + code).set({
+      code, white: side === 'w' ? online.me : null, black: side === 'b' ? online.me : null,
+      moves: [], status: 'waiting', createdAt: now, updatedAt: now
+    });
+  } catch (e) {
+    toast(e?.code === 'quota_exceeded' ? 'No room for new games in this page\'s storage. Ask the owner to clear old games.' : 'The game could not be created. Check your connection and try again.');
+    return null;
+  }
+  await enterOnline(code);
+  return code;
+}
+
+async function joinOnline(raw) {
+  if (!online.ready) return;
+  const code = String(raw || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{5}$/.test(code)) { $('onlineNote').textContent = 'Game codes are 5 letters and numbers.'; return; }
+  const ref = online.db.doc('games/' + code);
+  try {
+    // Lease the game while claiming the empty seat, so two people can't take it at once.
+    const lease = await ref.acquire({ holder: online.me, ttlMs: 4000 });
+    if (!lease.acquired) { $('onlineNote').textContent = 'Someone else is joining that game right now.'; return; }
+    const snap = await ref.get();
+    const d = snap.exists ? snap.data() : null;
+    if (!d) { $('onlineNote').textContent = `No game with the code ${code}.`; return; }
+    if (d.white !== online.me && d.black !== online.me) {
+      if (d.status !== 'waiting' || (d.white && d.black)) { $('onlineNote').textContent = 'That game already has two players.'; return; }
+      await ref.update({ [d.white ? 'black' : 'white']: online.me, status: 'playing', updatedAt: Date.now() });
+    }
+  } catch (e) {
+    $('onlineNote').textContent = e?.code === 'invalid_argument'
+      ? 'This page doesn\'t let you make changes. Ask the owner to share it with you as an Editor.'
+      : 'Joining failed. Check your connection and try again.';
+    return;
+  }
+  await enterOnline(code);
+}
+
+async function enterOnline(code) {
+  leaveOnline(false);
+  show('setupDlg', false); watchLobby(false);
+  show('endDlg', false);
+  const ref = online.db.doc('games/' + code);
+  const g = online.game = { code, ref, loaded: false, status: 'waiting', mine: null, white: null, black: null, sending: false };
+  game.mode = 'online'; game.started = true;
+  controls.autoRotate = false;
+  g.unsub = ref.onSnapshot((snap) => onGameSnap(g, snap), (e) => {
+    if (online.game !== g) return;
+    if (e?.code === 'unavailable') { g.unsub = null; setTimeout(() => { if (online.game === g) enterOnline(code); }, 1500); return; }
+    toast('Lost the connection to this game.');
+  });
+  updateHud();
+}
+
+// Leaving a game in progress resigns it; leaving a waiting game you created removes it.
+function leaveOnline(resign) {
+  const g = online.game;
+  if (!g) return;
+  online.game = null;
+  if (g.unsub) g.unsub();
+  show('waitDlg', false);
+  if (!resign || g.mine === null) return;
+  if (g.status === 'playing' && !game.over) g.ref.update({ resigned: g.mine, status: 'over', updatedAt: Date.now() }).catch(() => {});
+  else if (g.status === 'waiting') g.ref.delete().catch(() => {});
+}
+
+async function onGameSnap(g, snap) {
+  if (online.game !== g) return;
+  if (!snap.exists) { toast('That game no longer exists.'); online.game = null; if (g.unsub) g.unsub(); updateHud(); return; }
+  const d = snap.data();
+  const firstLoad = !g.loaded;
+  Object.assign(g, { white: d.white || null, black: d.black || null, status: d.status, rematch: d.rematch || null, loaded: true });
+  g.mine = d.white === online.me ? E.WHITE : d.black === online.me ? E.BLACK : null;
+  await nameOf([g.white, g.black]);
+  if (online.game !== g) return;
+  if (firstLoad) {
+    game.human = g.mine === null ? E.WHITE : g.mine;
+    resetBoard();
+    aimCamera(false);
+  }
+  await applyRemote(Array.isArray(d.moves) ? d.moves.filter((u) => typeof u === 'string') : [], !firstLoad);
+  if (d.resigned !== undefined && !game.over) {
+    game.over = { kind: 'resign', winner: d.resigned ^ E.BLACK, loser: d.resigned };
+    drawMarks();
+    showEnd();
+  }
+  show('waitDlg', g.status === 'waiting' && g.mine !== null);
+  $('waitCode').textContent = g.code;
+  if (!$('endDlg').hidden) setEndActions();
+  updateHud();
+}
+
+// Bring the local game in line with the shared move list: play new moves, or rebuild if they differ.
+async function applyRemote(moves, animate) {
+  let local = game.history.map((h) => h.uci);
+  const isPrefix = local.length <= moves.length && local.every((u, i) => u === moves[i]);
+  if (!isPrefix) { resetBoard(); local = []; animate = false; }
+  for (let i = local.length; i < moves.length; i++) {
+    const m = game.legal.find((x) => E.uci(x) === moves[i]);
+    if (!m) break;
+    await playMove(m, animate && i === moves.length - 1);
+  }
+}
+
+async function sendMoves() {
+  const g = online.game;
+  if (!g) return;
+  const body = () => ({ moves: game.history.map((h) => h.uci), status: game.over ? 'over' : 'playing', updatedAt: Date.now() });
+  // One write at a time; a move made while one is in flight goes out with the next write.
+  if (g.sending) { g.again = true; return; }
+  g.sending = true;
+  try {
+    do {
+      g.again = false;
+      try { await g.ref.update(body()); }
+      catch (e) {
+        if (e?.code !== 'unavailable') throw e;
+        await sleep(500 + Math.random() * 500);
+        await g.ref.update(body());
+      }
+    } while (g.again && online.game === g);
+  } catch (e) {
+    toast(e?.code === 'invalid_argument'
+      ? 'Your move didn\'t go through: this page doesn\'t let you make changes. Ask the owner to share it with you as an Editor.'
+      : 'Your move didn\'t go through. Check your connection; the board will go back to the last saved position.');
+    const snap = await g.ref.get().catch(() => null);
+    if (snap?.exists && online.game === g) applyRemote(snap.data().moves || [], false);
+  } finally {
+    g.sending = false;
+  }
+}
+
+// ------------------------------------------------------------------ HUD + dialogs
+
+function setStatus(text, state) { $('statusText').textContent = text; $('status').dataset.state = state; }
+
+function updateHud() {
+  const g = online.game;
+  if (!game.started) setStatus('Choose a game', 'idle');
+  else if (game.over) setStatus('Game over', 'idle');
+  else if (game.mode === 'online' && (!g || !g.loaded)) setStatus('Connecting to the game', 'thinking');
+  else if (game.mode === 'online' && g.status === 'waiting') setStatus('Waiting for a friend to join', 'thinking');
+  else if (game.mode === 'online' && g.mine === null) setStatus(`Watching · ${game.pos.turn === E.WHITE ? 'White' : 'Black'} to move`, 'idle');
+  else if (game.pos.turn !== game.human) setStatus(game.mode === 'online' ? `${opponentName()}'s move` : 'Computer is thinking', 'thinking');
+  else if (game.pos.inCheck()) setStatus('Check. Your move', 'check');
+  else setStatus('Your move', 'ready');
+
+  const mine = game.history.filter((h) => h.color === game.human && h.captured).map((h) => h.captured & 7);
+  const theirs = game.history.filter((h) => h.color !== game.human && h.captured).map((h) => h.captured & 7);
+  const val = [0, 1, 3, 3, 5, 9, 0], sum = (a) => a.reduce((s, t) => s + val[t], 0);
+  const adv = sum(mine) - sum(theirs);
+  const theirColor = game.human === E.WHITE ? 'b' : 'w';
+  const cap = $('capYou');
+  if (!mine.length && adv <= 0) cap.innerHTML = '<span class="empty">Nothing yet</span>';
+  else cap.innerHTML = mine.sort((a, b) => b - a).map((t) => GLYPH[theirColor][t]).join('') + (adv > 0 ? `<span class="adv">+${adv}</span>` : '');
+
+  const last = game.history[game.history.length - 1];
+  $('lastMove').innerHTML = last ? `${last.moveNo}${last.color === E.WHITE ? '.' : '…'} ${last.san}` : '<span class="empty">None</span>';
+}
+
+function show(id, on) { $(id).hidden = !on; }
+
+let setupCancellable = false;
+function openSetup(cancellable) {
+  setupCancellable = cancellable;
+  $(settings.level === 'easy' ? 'lvEasy' : settings.level === 'hard' ? 'lvHard' : 'lvMedium').checked = true;
+  $(settings.side === 'b' ? 'sdBlack' : settings.side === 'r' ? 'sdRandom' : 'sdWhite').checked = true;
+  $(settings.mode === 'online' ? 'mdOnline' : 'mdAi').checked = true;
+  $(settings.style === 'classic' ? 'stClassic' : 'stFighters').checked = true;
+  $('setupCancel').hidden = !cancellable;
+  $('onlineNote').textContent = '';
+  show('setupDlg', true);
+  refreshSetup();
+}
+
+function refreshSetup() {
+  const onlineMode = $('mdOnline').checked, open = !$('setupDlg').hidden;
+  $('levelSet').hidden = onlineMode;
+  $('onlineSet').hidden = !onlineMode;
+  $('setupLead').textContent = onlineMode
+    ? 'Play a friend, each on your own device. Join a game below or create one and share its code.'
+    : 'You against the computer. Choose how strong it plays and which side you take.';
+  const inGame = game.mode === 'online' && online.game && online.game.status === 'playing' && !game.over;
+  $('startBtn').textContent = onlineMode ? (inGame ? 'Resign and create game' : 'Create online game')
+    : (setupCancellable ? (inGame ? 'Resign and start' : 'Start new game') : 'Start game');
+  const blocker = onlineMode ? onlineBlocker() : '';
+  $('startBtn').disabled = !!blocker;
+  $('codeJoin').disabled = !!blocker;
+  if (onlineMode && blocker) { $('onlineNote').textContent = blocker; $('lobbyList').innerHTML = ''; }
+  watchLobby(open && onlineMode && !blocker);
+}
+for (const id of ['mdAi', 'mdOnline']) $(id).addEventListener('change', refreshSetup);
+// Picking a style swaps the pieces on the board behind the card right away.
+for (const id of ['stFighters', 'stClassic']) $(id).addEventListener('change', () => {
+  const next = $('stClassic').checked ? 'classic' : 'fighters';
+  settings.style = next;
+  try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
+  setStyle(next);
+});
+
+$('setupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const data = new FormData(e.target);
+  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style') };
+  await setStyle(settings.style);
+  try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
+  const side = settings.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : settings.side;
+  if (settings.mode === 'online') {
+    $('startBtn').disabled = true;
+    leaveOnline(true);
+    await createOnline(side);
+    $('startBtn').disabled = false;
+    return;
+  }
+  show('setupDlg', false); watchLobby(false);
+  newGame(side, settings.level);
+});
+$('setupCancel').onclick = () => { show('setupDlg', false); watchLobby(false); };
+$('codeJoin').onclick = () => joinOnline($('codeInput').value);
+$('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); joinOnline($('codeInput').value); } });
+$('waitCancel').onclick = () => { leaveOnline(true); game.started = false; resetBoard(); updateHud(); openSetup(false); };
+$('newBtn').onclick = () => { if (!templatesReady) return; show('endDlg', false); openSetup(game.started && !game.over); };
+$('viewBtn').onclick = () => aimCamera(false);
+function showSound() {
+  $('soundBtn').setAttribute('aria-pressed', String(sfx.on));
+  $('soundBtn').setAttribute('aria-label', sfx.on ? 'Sound on' : 'Sound off');
+  $('soundWaves').toggleAttribute('hidden', !sfx.on);
+  $('soundOff').toggleAttribute('hidden', sfx.on);
+}
+$('soundBtn').onclick = () => { sfx.on = !sfx.on; showSound(); };
+showSound();
+
+function openPromotion(options) {
+  pendingPromo = options;
+  const color = game.human === E.WHITE ? 'w' : 'b', wrap = $('promoBtns');
+  wrap.innerHTML = '';
+  for (const t of [E.QUEEN, E.ROOK, E.BISHOP, E.KNIGHT]) {
+    const m = options.find((x) => E.promo(x) === t);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.innerHTML = `<i class="glyph">${GLYPH[color][t]}</i><small>${NAMES[t]}</small>`;
+    btn.onclick = () => { show('promoDlg', false); pendingPromo = null; humanMove(m); };
+    wrap.appendChild(btn);
+  }
+  show('promoDlg', true);
+  wrap.firstChild.focus();
+}
+$('promoCancel').onclick = () => { show('promoDlg', false); pendingPromo = null; setSelected(-1); drawMarks(); };
+
+function showEnd() {
+  const o = game.over, moves = Math.ceil(game.history.length / 2);
+  let title, text, eyebrow;
+  const vs = game.mode === 'online' ? opponentName() : null, watching = game.mode === 'online' && online.game?.mine === null;
+  if (vs && (o.kind === 'mate' || o.kind === 'resign')) {
+    const side = (c) => (c === E.WHITE ? 'White' : 'Black');
+    eyebrow = `${o.kind === 'mate' ? 'Checkmate' : 'Resigned'} · ${moves} moves`;
+    if (watching) { title = `${side(o.winner)} wins`; text = o.kind === 'mate' ? `${side(o.winner)} checkmated ${side(o.winner ^ E.BLACK)}.` : `${side(o.loser)} resigned.`; }
+    else {
+      const youWon = o.winner === game.human;
+      title = youWon ? 'You win' : `${vs} wins`;
+      text = o.kind === 'mate' ? (youWon ? `You checkmated ${vs}.` : `${vs} checkmated your king.`) : (youWon ? `${vs} resigned.` : 'You resigned.');
+    }
+  } else if (o.kind === 'mate') {
+    const youWon = o.winner === game.human;
+    eyebrow = `Checkmate · ${moves} moves`;
+    title = youWon ? 'You win' : 'The computer wins';
+    text = youWon ? `You checkmated the ${game.level} computer.` : `The ${game.level} computer checkmated your king.`;
+  } else {
+    eyebrow = `Draw · ${moves} moves`;
+    title = 'Draw';
+    text = {
+      stalemate: 'Stalemate. The side to move has no legal moves but is not in check.',
+      fifty: 'Fifty-move rule. Fifty moves each passed with no capture or pawn move.',
+      repetition: 'Threefold repetition. The same position came up three times.',
+      material: 'Neither side has enough pieces left to checkmate.'
+    }[o.kind];
+  }
+  $('endEyebrow').textContent = eyebrow; $('endTitle').textContent = title; $('endText').textContent = text;
+  setEndActions();
+  show('endDlg', true);
+  $('endAgain').focus();
+}
+
+// Online, "Play again" offers a rematch with colors swapped; the other player sees "Join rematch".
+function setEndActions() {
+  const g = game.mode === 'online' ? online.game : null;
+  $('endSetup').textContent = g ? 'New game' : 'Change level';
+  $('endAgain').hidden = !!(g && g.mine === null);
+  $('endAgain').textContent = !g ? 'Play again' : g.rematch ? 'Join rematch' : 'Rematch';
+}
+$('endAgain').onclick = async () => {
+  const g = game.mode === 'online' ? online.game : null;
+  if (!g) { show('endDlg', false); newGame(game.human === E.WHITE ? 'w' : 'b', game.level); return; }
+  if (g.rematch) { joinOnline(g.rematch); return; }
+  const old = g.ref, code = await createOnline(g.mine === E.WHITE ? 'b' : 'w');
+  if (code) old.update({ rematch: code, updatedAt: Date.now() }).catch(() => {});
+};
+$('endSetup').onclick = () => { show('endDlg', false); openSetup(false); };
+$('endView').onclick = () => show('endDlg', false);
+
+// ------------------------------------------------------------------ camera + picking
+
+let aimId = 0;
+function fitDistance() {
+  const vfov = THREE.MathUtils.degToRad(camera.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  // Board (with frame) is ~9.3 wide; leave a little room on each side and below the top bar.
+  return Math.max(11.5, 5.1 / Math.tan(hfov / 2), 6.2 / Math.tan(vfov / 2));
+}
+// Turns the camera to the player's side; a newer aim cancels one still in progress.
+function aimCamera(instant) {
+  const id = ++aimId;
+  const theta = game.human === E.BLACK ? Math.PI : 0;
+  const end = new THREE.Vector3().setFromSphericalCoords(fitDistance(), 0.78, theta);
+  controls.maxDistance = fitDistance() * 1.6;
+  controls.minDistance = 6;
+  if (instant || reduceMotion) { camera.position.copy(end); controls.target.set(0, 0, 0); controls.update(); return; }
+  const start = new THREE.Spherical().setFromVector3(camera.position);
+  const goal = new THREE.Spherical().setFromVector3(end);
+  let dTheta = goal.theta - start.theta;
+  dTheta = ((dTheta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  tween(700, (e) => {
+    if (id !== aimId) return false;
+    const s = new THREE.Spherical(start.radius + (goal.radius - start.radius) * e, start.phi + (goal.phi - start.phi) * e, start.theta + dTheta * e);
+    camera.position.setFromSpherical(s);
+  });
+}
+
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) { downAt = null; return; }
+  downAt = null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hitPiece = ray.intersectObjects(pickers, false)[0];
+  if (hitPiece) {
+    // Clicking an enemy piece means "capture there"; clicking your own selects it.
+    onSquare(hitPiece.object.userData.piece.userData.sq);
+    return;
+  }
+  const hit = ray.intersectObject(pickPlane)[0];
+  if (!hit) { setSelected(-1); drawMarks(); return; }
+  const f = Math.floor(hit.point.x + 4), r = Math.floor(4 - hit.point.z);
+  if (f >= 0 && f < 8 && r >= 0 && r < 8) onSquare(r * 8 + f);
+});
+
+function resize() {
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  controls.maxDistance = fitDistance() * 1.6;
+}
+addEventListener('resize', resize);
+resize();
+
+let lastFrame = performance.now();
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.05, (now - lastFrame) / 1000) / SLOW;
+  lastFrame = now;
+  runTweens(now);
+  for (const piece of live) piece.userData.mixer.update(dt);
+  for (let i = effects.length - 1; i >= 0; i--) if (!effects[i].update(dt)) effects.splice(i, 1);
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+// ------------------------------------------------------------------ boot
+
+let templatesReady = false;
+window.claude?.hot?.snapshot?.(() => ({
+  started: game.started, human: game.human, level: game.level, moves: game.history.map((h) => h.uci), settings,
+  onlineCode: game.mode === 'online' && online.game ? online.game.code : null
+}));
+
+const onlineReady = initOnline().catch(() => {});
+
+async function start(data) {
+  aimCamera(true);
+  controls.autoRotate = !reduceMotion;
+  try {
+    await loadCharacters();
+  } catch (err) {
+    $('loadText').textContent = `The fighters didn't load: ${err.message}. Reload the page to try again.`;
+    $('loadText').classList.add('err');
+    setStatus('Could not load pieces', 'check');
+    return;
+  }
+  templatesReady = true;
+  game.legal = game.pos.legal();
+  if (data && data.settings) settings = data.settings;
+  if (settings.style === 'classic') {
+    $('loadText').textContent = 'Setting out the classic set.';
+    try { await loadClassic(); style = 'classic'; } catch {}
+  }
+  syncPieces();
+  show('loadDlg', false);
+  await onlineReady;
+  if (data && data.onlineCode && online.ready) {
+    enterOnline(data.onlineCode);
+  } else if (data && data.started) {
+    newGame(data.human === E.BLACK ? 'b' : 'w', data.level);
+    game.id++; // drop any engine reply for the replayed start
+    for (const u of data.moves || []) {
+      const m = game.legal.find((x) => E.uci(x) === u);
+      if (!m) break;
+      await playMove(m, false);
+    }
+    game.busy = false;
+    updateHud();
+    maybeComputerMove();
+  } else {
+    updateHud();
+    openSetup(false);
+  }
+}
+
+window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+</script>
+
+</body></html>
