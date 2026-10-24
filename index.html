@@ -535,7 +535,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enablePan = false;
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.minPolarAngle = 0.12;
+controls.minPolarAngle = 0.001; // straight down is allowed: the default view is bird's-eye
 controls.maxPolarAngle = 1.25;
 controls.rotateSpeed = 0.7;
 controls.autoRotateSpeed = 0.6;
@@ -2771,6 +2771,12 @@ $('endView').onclick = () => show('endDlg', false);
 // ------------------------------------------------------------------ camera + picking
 
 let aimId = 0;
+// Bird's-eye: straight above the centre, like the flat board but in 3D. Far enough that the whole board
+// (with its frame and the bars) fits, plus the pieces' height toward the camera.
+function topDistance() {
+  const vfov = THREE.MathUtils.degToRad(camera.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  return 1.6 + Math.max(5.6 / Math.tan(vfov / 2), 5.0 / Math.tan(hfov / 2));
+}
 function fitDistance() {
   const vfov = THREE.MathUtils.degToRad(camera.fov), hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
   // Board (with frame) is ~9.3 wide; leave a little room on each side and below the top bar.
@@ -2780,8 +2786,9 @@ function fitDistance() {
 function aimCamera(instant) {
   const id = ++aimId;
   const theta = game.human === E.BLACK ? Math.PI : 0;
-  const end = new THREE.Vector3().setFromSphericalCoords(fitDistance(), 0.78, theta);
-  controls.maxDistance = fitDistance() * 1.6;
+  // A hair off vertical keeps the player's side at the bottom of the screen.
+  const end = new THREE.Vector3().setFromSphericalCoords(topDistance(), 0.002, theta);
+  controls.maxDistance = Math.max(fitDistance(), topDistance()) * 1.6;
   controls.minDistance = 6;
   if (instant || reduceMotion) { camera.position.copy(end); controls.target.set(0, 0, 0); controls.update(); return; }
   const start = new THREE.Spherical().setFromVector3(camera.position);
@@ -3100,7 +3107,7 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  controls.maxDistance = fitDistance() * 1.6;
+  controls.maxDistance = Math.max(fitDistance(), topDistance()) * 1.6;
 }
 addEventListener('resize', resize);
 resize();
