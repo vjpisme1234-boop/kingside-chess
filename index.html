@@ -272,7 +272,7 @@
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
-      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Stems curve up like chess wall hooks. Not the Fighters.</em></span></label>
+      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, so you can tell them apart from above. Not the Fighters.</em></span></label>
     </fieldset>
     <fieldset>
       <legend>Speed</legend>
@@ -729,14 +729,14 @@ function classicMat(m) {
   return classicMats.get(m);
 }
 
-// Bends a standing piece like a chess-piece wall hook: the base stays on its square, the stem between
-// `from` and `to` (fractions of the height) curves forward along +z, and the top stands upright again,
-// `lean` squares ahead. Each mesh gets its own float copy of its geometry (the files are quantized, and
-// both sides' copies share the source geometry).
-function bendUp(node, from = 0.08, to = 0.5, lean = 0.25) {
+// Bends a standing piece like a chess-piece wall hook: the base stays on its square and the stem between
+// `from` and `to` (fractions of the height) curves, so everything above it tips over by `angle` toward
+// `dir` (+1 = +z, -1 = -z in the piece's own frame). Each mesh gets its own float copy of its geometry (the files are quantized, and both
+// sides' copies share the source geometry).
+function bendUp(node, dir, from = 0.12, to = 0.42, angle = 0.7) {
   node.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(node);
-  const y0 = box.min.y + (box.max.y - box.min.y) * from, y1 = box.min.y + (box.max.y - box.min.y) * to;
+  const y0 = box.min.y + (box.max.y - box.min.y) * from, len = (box.max.y - box.min.y) * (to - from), R = len / angle;
   const v = new THREE.Vector3(), n = new THREE.Vector3(), inv = new THREE.Matrix4(), toNode = new THREE.Matrix3(), back = new THREE.Matrix3();
   node.traverse((m) => {
     if (!m.isMesh) return;
@@ -747,14 +747,19 @@ function bendUp(node, from = 0.08, to = 0.5, lean = 0.25) {
     toNode.getNormalMatrix(m.matrixWorld); back.getNormalMatrix(inv);
     for (let i = 0; i < src.count; i++) {
       v.fromBufferAttribute(src, i).applyMatrix4(m.matrixWorld);
-      const t = THREE.MathUtils.clamp((v.y - y0) / (y1 - y0), 0, 1);
-      v.z += lean * t * t * (3 - 2 * t);
+      // Bend around an axis parallel to x, R away from the stem: the arc for the stem, then straight on.
+      const h = v.y - y0, z = v.z * dir;
+      const th = THREE.MathUtils.clamp(h / R, 0, angle), past = Math.max(0, h - len);
+      if (h > 0) {
+        const c = Math.cos(th), sn = Math.sin(th);
+        v.y = y0 + (R - z) * sn + past * c;
+        v.z = (R - (R - z) * c + past * sn) * dir;
+      }
       pos.setXYZ(i, ...v.applyMatrix4(inv).toArray());
       if (!nor) continue;
-      // Normals of a shear z += f(y) tilt by -f'(y) * nz in y.
-      const slope = lean * 6 * t * (1 - t) / (y1 - y0);
       n.fromBufferAttribute(nsrc, i).applyMatrix3(toNode);
-      n.y -= slope * n.z;
+      const c = Math.cos(th), sn = Math.sin(th), ny = n.y, nz = n.z * dir;
+      n.y = ny * c - nz * sn; n.z = (ny * sn + nz * c) * dir;
       nor.setXYZ(i, ...n.normalize().applyMatrix3(back).normalize().toArray());
     }
     g.setAttribute('position', pos);
@@ -865,11 +870,16 @@ async function setStyle(next) {
   drawMarks();
 }
 
-// The bent version of a static piece is made the first time "Bent pieces" is on.
+// With "Bent pieces" on, every piece leans away from the player's camera (-z when playing White), so the
+// camera, looking down at about 45°, sees each one side-on instead of foreshortened. The piece
+// turns by yaw, so its own lean direction flips when that turn faces it the other way. Each bent version
+// is made the first time it's needed.
 function staticNode(t) {
   if (!settings.bend) return t.node;
-  if (!t.bent) { t.bent = t.node.clone(true); bendUp(t.bent); }
-  return t.bent;
+  const toward = game.human === E.BLACK ? 1 : -1, dir = Math.cos(t.yaw || 0) > 0 ? toward : -toward;
+  t.bent ||= {};
+  if (!t.bent[dir]) { t.bent[dir] = t.node.clone(true); bendUp(t.bent[dir], dir); }
+  return t.bent[dir];
 }
 
 function makeStaticPiece(code, sq) {
@@ -1486,8 +1496,8 @@ function resetBoard() {
 function newGame(side, level) {
   leaveOnline(true);
   game.mode = 'ai';
+  game.human = side === 'b' ? E.BLACK : E.WHITE; // before the pieces are made: bent ones lean toward this side
   resetBoard();
-  game.human = side === 'b' ? E.BLACK : E.WHITE;
   game.level = level; game.started = true;
   updateHud();
   aimCamera(true);
