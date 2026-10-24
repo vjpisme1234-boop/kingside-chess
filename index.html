@@ -896,10 +896,10 @@ async function loadCharacters() {
   }
 }
 
-// Each side's characters are recolored: textures become shades of ivory for White and of near-black for
+// Each side's characters are recolored: textures become shades of cream for White and of near-black for
 // Black, so detail survives as light and dark; untextured parts take the side's plain tone.
 const SIDE_TONES = {
-  [E.WHITE]: { tint: new THREE.Color(0xf1ece2), lo: 0.55, hi: 1.0, plain: 0.92 },
+  [E.WHITE]: { tint: new THREE.Color(0xe8d2a6), lo: 0.5, hi: 1.0, plain: 0.9 },
   [E.BLACK]: { tint: new THREE.Color(0xffffff), lo: 0.012, hi: 0.08, plain: 0.03 }
 };
 const sideMaterials = new Map();
@@ -2685,7 +2685,7 @@ async function load2dPics(set) {
         const isGold = sat > thr && hi > 0.2 && g >= b && g <= r + 0.02;
         let v;
         if (isGold) v = [Math.min(1, r * 1.25), Math.min(1, g * 1.2), b];
-        else if (color === E.WHITE) { const k = 0.5 + 0.55 * lum; v = [0.95 * k, 0.93 * k, 0.88 * k]; }
+        else if (color === E.WHITE) { const k = 0.5 + 0.55 * lum; v = [0.95 * k, 0.86 * k, 0.69 * k]; }
         else { const k = 0.07 + 0.42 * lum; v = [k, k, k * 1.05]; }
         o[i] = v[0] * 255; o[i + 1] = v[1] * 255; o[i + 2] = v[2] * 255; o[i + 3] = d[i + 3];
       }
