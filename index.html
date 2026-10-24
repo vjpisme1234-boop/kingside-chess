@@ -56,6 +56,7 @@
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     font-weight: 500; font-size: 14px; white-space: nowrap;
   }
+  .sr-only { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brass); flex: none; }
   .status[data-state="thinking"] .dot { animation: pulse 1s ease-in-out infinite; }
   .status[data-state="check"] .dot { background: var(--alert); }
@@ -236,6 +237,11 @@
     padding: 10px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   }
+  .movebox .grip { height: 14px; margin: -4px 30% 0; border-radius: 7px; cursor: grab; touch-action: none; flex: none;
+    background: radial-gradient(circle, var(--muted) 1.2px, transparent 1.6px) center / 8px 8px repeat-x; opacity: 0.7; }
+  .movebox .grip:active { cursor: grabbing; }
+  .movebox.moved { right: auto; bottom: auto; }
+  .movebox [hidden] { display: none !important; }
   .movelist { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; font: 500 14px var(--font-mono); font-variant-numeric: tabular-nums; }
   .movelist li { display: grid; grid-template-columns: 2.4em 1fr 1fr; align-items: center; }
   .movelist li i { font-style: normal; color: var(--muted); font-size: 12px; }
@@ -288,7 +294,7 @@
 
 <header class="bar top">
   <div class="wordmark">Kingside<small>3D chess</small></div>
-  <div class="status" id="status" data-state="idle" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Loading pieces</span></div>
+  <div class="status sr-only" id="status" data-state="idle" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Loading pieces</span></div>
   <div class="tools">
     <button class="icon-btn" id="soundBtn" type="button" title="Sound" aria-label="Sound on" aria-pressed="true">
       <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path id="soundOff" d="M17 9l5 6M22 9l-5 6" hidden/></svg>
@@ -323,6 +329,7 @@
 <div class="board2d" id="board2d" hidden aria-label="Chess board, flat view"></div>
 
 <aside class="movebox" id="moveBox" hidden aria-label="Moves">
+  <div class="grip" id="moveGrip" title="Drag to move" aria-hidden="true"></div>
   <div class="clock" id="clockTop" hidden></div>
   <ol class="movelist" id="moveList"></ol>
   <div class="movenav">
@@ -427,6 +434,10 @@
     <fieldset>
       <legend>Pieces</legend>
       <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
+    </fieldset>
+    <fieldset>
+      <legend>On screen</legend>
+      <label class="choice toggle"><input type="checkbox" id="moveListBox"><span><b>Move list</b><em>Every move so far, with buttons to step back through the game. Drag it by the dots on top.</em></span></label>
     </fieldset>
     <fieldset>
       <legend>Speed</legend>
@@ -1065,7 +1076,50 @@ function stripPedestal(src, frac) {
     kept.boundingBox = null;
     m.geometry = kept;
   });
-  return { box, shoulders };
+  return { box, shoulders, neckY: all.min.y + H * 0.76 };
+}
+
+// Moves the triangles above neckY onto their own meshes inside a 'neck' group that sits at the neck, so
+// the head can turn on it (rotation.x tips the face back until it looks up at the sky).
+function splitHead(src, neckY) {
+  src.updateMatrixWorld(true);
+  const parts = [], headBox = new THREE.Box3(), v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+  src.traverse((m) => {
+    if (!m.isMesh) return;
+    const g = m.geometry, pos = g.attributes.position, idx = g.index;
+    const groups = g.groups.length ? g.groups : [{ start: 0, count: idx.count, materialIndex: 0 }];
+    const bodyIdx = [], headIdx = [], bodyGroups = [], headGroups = [];
+    for (const grp of groups) {
+      const b0 = bodyIdx.length, h0 = headIdx.length;
+      for (let i = grp.start; i < Math.min(idx.count, grp.start + grp.count); i += 3) {
+        const ids = [idx.getX(i), idx.getX(i + 1), idx.getX(i + 2)];
+        ids.forEach((k, j) => v[j].fromBufferAttribute(pos, k).applyMatrix4(m.matrixWorld));
+        if ((v[0].y + v[1].y + v[2].y) / 3 > neckY) { headIdx.push(...ids); v.forEach((p) => headBox.expandByPoint(p)); }
+        else bodyIdx.push(...ids);
+      }
+      bodyGroups.push({ start: b0, count: bodyIdx.length - b0, materialIndex: grp.materialIndex });
+      headGroups.push({ start: h0, count: headIdx.length - h0, materialIndex: grp.materialIndex });
+    }
+    const make = (index, grps) => {
+      const geo = new THREE.BufferGeometry();
+      for (const [k, attr] of Object.entries(g.attributes)) geo.setAttribute(k, attr);
+      geo.setIndex(index);
+      for (const grp of grps) geo.addGroup(grp.start, grp.count, grp.materialIndex);
+      return geo;
+    };
+    if (headIdx.length) parts.push({ m, geo: make(headIdx, headGroups) });
+    m.geometry = make(bodyIdx, bodyGroups);
+  });
+  const neck = new THREE.Group();
+  neck.name = 'kingsideNeck';
+  neck.position.set((headBox.min.x + headBox.max.x) / 2, neckY, (headBox.min.z + headBox.max.z) / 2);
+  const inv = new THREE.Matrix4().makeTranslation(-neck.position.x, -neck.position.y, -neck.position.z);
+  for (const { m, geo } of parts) {
+    const head = new THREE.Mesh(geo, m.material);
+    new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld).decompose(head.position, head.quaternion, head.scale);
+    neck.add(head);
+  }
+  src.add(neck);
 }
 
 // Cloth with a fine stone grain, recolored per side like the busts (shade < 1 is darker, for trim), and
@@ -1181,7 +1235,8 @@ function loadBusts(name) {
     for (let i = 0; i < kinds.length; i++) {
       const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene, strip = BUST_BODIES[name][type];
       // With a body, only the bust is kept; the body stands under its shoulders, centred on the square.
-      const { box, shoulders } = strip ? stripPedestal(src, strip[0]) : { box: new THREE.Box3().setFromObject(src) };
+      const { box, shoulders, neckY } = strip ? stripPedestal(src, strip[0]) : { box: new THREE.Box3().setFromObject(src) };
+      if (strip) splitHead(src, neckY);
       const size = box.getSize(new THREE.Vector3()), c = (shoulders || box).getCenter(new THREE.Vector3());
       const tall = strip ? BUST_HEIGHTS[type] * BODY_GROW / (1 + BODY_RATIO) : BUST_HEIGHTS[type];
       const scale = Math.min(tall / size.y, 0.86 / Math.max(size.x, size.z));
@@ -1247,8 +1302,8 @@ function makeStaticPiece(code, sq) {
   const t = staticSets[style][code], piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
   const char = new THREE.Group(), tilt = new THREE.Group();
-  // Busts on both sides face the player's camera (+z when playing White), so you see every face.
-  const yaw = t.bust && game.human === E.BLACK ? Math.PI : 0;
+  // Busts face the other side, like the fighters: White's turn to -z.
+  const yaw = t.bust && !(code & E.BLACK) ? Math.PI : 0;
   const model = t.node.clone(true);
   if (settings.outline !== false) addOutlines(model);
   tilt.add(model);
@@ -1262,7 +1317,8 @@ function makeStaticPiece(code, sq) {
   piece.add(picker);
   pickers.push(picker);
   // Busts lose the head from the neck up, about three quarters of the way up the piece.
-  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut };
+  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut,
+    neck: model.getObjectByName('kingsideNeck') };
   pieceRoot.add(piece);
   return piece;
 }
@@ -1527,7 +1583,10 @@ function turnTo(piece, yaw, ms) {
 // Moves a piece to a square. A newer move of the same piece cancels this one mid-way.
 function glide(piece, toSq, ms) {
   const id = ++piece.userData.motion, a = piece.position.clone(), b = sqPos(toSq);
-  if (piece.userData.lookUp) { piece.userData.lookUp = false; piece.userData.tilt.rotation.x = 0; } // stands up to move
+  if (piece.userData.lookUp) { // stands up to move
+    piece.userData.lookUp = false; piece.userData.tilt.rotation.x = 0;
+    if (piece.userData.neck) piece.userData.neck.rotation.x = 0;
+  }
   piece.userData.sq = toSq;
   if (!piece.userData.static) piece.userData.char.rotation.y = angleTo(a, b);
   return tween(ms, (e) => {
@@ -1718,6 +1777,13 @@ function cutHead(victim) {
 // the body keeps the rest.
 function cutStaticHead(victim) {
   victim.updateMatrixWorld(true);
+  const neck = victim.userData.neck;
+  if (neck) {
+    victim.userData.neck = null;
+    const neckAt = neck.getWorldPosition(new THREE.Vector3());
+    scene.attach(neck);
+    return { head: neck, neckAt };
+  }
   const box = new THREE.Box3().setFromObject(victim.userData.tilt);
   const cutY = box.min.y + (box.max.y - box.min.y) * (victim.userData.cut || 0.66);
   const center = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
@@ -1936,31 +2002,51 @@ function newGame(side, level) {
   maybeComputerMove();
 }
 
-// Game start: the camera makes one slow full circle round the board, then every piece turns to the
-// camera and tips its head back to look up at it. Dragging the board cuts the circle short.
+// Game start: the camera flies round the board (low along one side, past the opponent's pieces, up
+// over the top) and lands back on the player's seat. Then every piece slowly tips its head back until
+// it looks straight up at the sky, its body still facing the other side. Dragging the board cuts the
+// flight short.
 let introId = 0;
 function introOrbit() {
   const id = ++introId;
   if (reduceMotion || is2d()) { piecesLookUp(); return; }
-  const start = new THREE.Spherical().setFromVector3(camera.position), s = start.clone();
+  const seat = new THREE.Spherical().setFromVector3(camera.position), th = seat.theta;
+  const at = (r, phi, turn) => new THREE.Vector3().setFromSphericalCoords(r, phi, th + turn * Math.PI);
+  const path = new THREE.CatmullRomCurve3([
+    camera.position.clone(), at(8.5, 1.2, 0.5), at(7, 1.18, 1), at(9, 0.95, 1.5), at(12, 0.3, 1.85), camera.position.clone()
+  ], false, 'centripetal');
   const stop = () => { introId++; };
   controls.addEventListener('start', stop);
-  tween(9000, (e) => {
+  tween(11000, (e) => {
     if (id !== introId) return false;
-    s.theta = start.theta + e * Math.PI * 2;
-    camera.position.setFromSpherical(s);
+    camera.position.copy(path.getPoint(e));
   }, (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2)).then(() => {
     controls.removeEventListener('start', stop);
     if (game.started && !game.over) piecesLookUp();
   });
 }
+// Rigged pieces bend the neck and head back; a bust's head turns on its neck; the rest lean back a little.
+// A piece stands straight again when it moves (glide) or plays an animation (the mixer resets its bones).
+const LOOK_UP_MS = 3200;
 function piecesLookUp() {
   for (const piece of pieces.values()) {
-    const yaw = angleTo(piece.position, camera.position), tilt = piece.userData.tilt, from = tilt.rotation.x;
-    piece.userData.facing = yaw;
-    piece.userData.lookUp = true;
-    turnTo(piece, yaw, 450);
-    tween(450, (e) => { if (!piece.userData.lookUp) return false; tilt.rotation.x = from + (-0.32 - from) * e; }, easeOut);
+    const u = piece.userData, slow = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+    u.lookUp = true;
+    const wait = Math.random() * 400; // not all in lockstep
+    if (u.neck) {
+      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; u.neck.rotation.x = e * Math.PI / 2; }, slow);
+    } else if (u.mixer && !u.beast) {
+      const bones = [];
+      u.char.traverse((o) => { if (o.isBone && /neck$/i.test(o.name)) bones.push([o, 0.55]); else if (o.isBone && isHeadBone(o)) bones.push([o, 0.85]); });
+      const base = bones.map(([b]) => b.quaternion.clone()), q = new THREE.Quaternion(), x = new THREE.Vector3(1, 0, 0);
+      tween(LOOK_UP_MS + wait, (e) => {
+        if (!u.lookUp) return false;
+        bones.forEach(([b, a], i) => b.quaternion.copy(base[i]).multiply(q.setFromAxisAngle(x, a * e)));
+      }, slow);
+    } else {
+      const tilt = u.tilt;
+      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; tilt.rotation.x = -0.32 * e; }, slow);
+    }
   }
 }
 
@@ -2355,7 +2441,12 @@ function updateHud() {
 // The move list: one row per move number; the move on the board now is highlighted, and any move can
 // be clicked to see the position after it.
 function renderMoves() {
-  $('moveBox').hidden = !game.started;
+  // The list is optional (Settings); the clocks show either way.
+  const list0 = !!settings.moveList;
+  $('moveBox').hidden = !game.started || (!list0 && !game.clock);
+  $('moveList').hidden = $('moveGrip').hidden = !list0;
+  document.querySelector('.movenav').hidden = !list0;
+  placeMoveBox();
   const list = $('moveList'), at = viewPly ?? game.history.length;
   list.innerHTML = '';
   if (!game.history.length) { list.innerHTML = '<li class="empty">No moves yet</li>'; }
@@ -2466,6 +2557,7 @@ function showSpeed() { $('speedOut').textContent = `${+$('speedDial').value}×`;
 // ---- Settings (look and sound)
 function openPrefs() {
   $('outlineBox').checked = settings.outline !== false;
+  $('moveListBox').checked = !!settings.moveList;
   $('speedDial').value = settings.speed || 1;
   showSpeed();
   const pick = (id, table, key, fallback, swatch, apply) => {
@@ -2514,6 +2606,39 @@ $('outlineBox').addEventListener('change', () => {
   saveSettings();
   clearPieces(); syncPieces(); drawMarks();
 });
+$('moveListBox').addEventListener('change', () => {
+  settings.moveList = $('moveListBox').checked;
+  saveSettings(); renderMoves();
+});
+// The move list can be dragged anywhere by its dots; where it was left is remembered (as a share of the
+// window, so it stays on screen when the window changes size).
+function placeMoveBox() {
+  const box = $('moveBox'), at = settings.moveBoxAt;
+  box.classList.toggle('moved', !!at);
+  if (!at) { box.style.left = box.style.top = ''; return; }
+  const w = box.offsetWidth || 210, h = box.offsetHeight || 120;
+  box.style.left = Math.max(8, Math.min(innerWidth - w - 8, at.x * innerWidth)) + 'px';
+  box.style.top = Math.max(8, Math.min(innerHeight - h - 8, at.y * innerHeight)) + 'px';
+}
+$('moveGrip').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  const box = $('moveBox'), r = box.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+  $('moveGrip').setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    settings.moveBoxAt = { x: (ev.clientX - dx) / innerWidth, y: (ev.clientY - dy) / innerHeight };
+    placeMoveBox();
+  };
+  const up = () => {
+    $('moveGrip').removeEventListener('pointermove', move);
+    $('moveGrip').removeEventListener('pointerup', up);
+    $('moveGrip').removeEventListener('pointercancel', up);
+    saveSettings();
+  };
+  $('moveGrip').addEventListener('pointermove', move);
+  $('moveGrip').addEventListener('pointerup', up);
+  $('moveGrip').addEventListener('pointercancel', up);
+});
+addEventListener('resize', placeMoveBox);
 $('speedDial').addEventListener('input', () => {
   settings.speed = +$('speedDial').value;
   showSpeed(); applySpeed(); saveSettings();
