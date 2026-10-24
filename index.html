@@ -1083,12 +1083,12 @@ function glide(piece, toSq, ms) {
 
 async function quietMove(piece, toSq, silent) {
   const dist = piece.position.distanceTo(sqPos(toSq));
-  if (!silent) sfx.slide((55 + dist * 10) / 1000);
+  if (!silent) sfx.slide((140 + dist * 25) / 1000);
   play(piece, 'idle', { time: Math.random() });
   const id = piece.userData.motion + 1;
   piece.userData.busy = true;
-  if (await glide(piece, toSq, 55 + dist * 10) && piece.userData.motion === id) {
-    await turnTo(piece, piece.userData.facing, 60);
+  if (await glide(piece, toSq, 140 + dist * 25) && piece.userData.motion === id) {
+    await turnTo(piece, piece.userData.facing, 150);
     if (piece.userData.motion === id) { piece.userData.busy = false; settle(piece); }
   }
 }
@@ -1096,7 +1096,7 @@ async function quietMove(piece, toSq, silent) {
 // One motion: the attacker slides through the victim with the strike landing on contact.
 async function killMove(attacker, victim, toSq) {
   const dist = attacker.position.distanceTo(sqPos(toSq));
-  const ms = Math.min(160, 70 + dist * 13);
+  const ms = Math.min(400, 175 + dist * 32);
   sfx.slide(ms / 1000);
   const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
   victim.userData.motion++; // stop it if it was still sliding, and put it on its square
@@ -1126,7 +1126,7 @@ async function killMove(attacker, victim, toSq) {
   await wait(40);
   if (attacker.userData.motion !== id) return;
   play(attacker, 'idle', { fade: 0.08, time: Math.random() });
-  await turnTo(attacker, attacker.userData.facing, 70);
+  await turnTo(attacker, attacker.userData.facing, 170);
   if (attacker.userData.motion === id) { attacker.userData.busy = false; settle(attacker); }
 }
 
@@ -1333,12 +1333,12 @@ function behead(victim, dir) {
   // The body drops (fall clip at double speed), gets knocked back a little, then sinks through the board.
   if (victim.userData.beast || victim.userData.static) {
     const tilt = victim.userData.tilt, side = Math.random() < 0.5 ? 1 : -1;
-    tween(170, (e) => { tilt.rotation.z = side * 1.45 * e; }, easeOut);
-  } else play(victim, 'fall', { once: true, speed: 4.5 });
+    tween(340, (e) => { tilt.rotation.z = side * 1.45 * e; }, easeOut);
+  } else play(victim, 'fall', { once: true, speed: 2 });
   const start = victim.position.clone(), back = start.clone().addScaledVector(dir, 0.35);
-  tween(130, (e) => { victim.position.lerpVectors(start, back, e); }, easeOut)
-    .then(() => wait(60))
-    .then(() => tween(200, (e) => { victim.position.y = -1.8 * e; }))
+  tween(260, (e) => { victim.position.lerpVectors(start, back, e); }, easeOut)
+    .then(() => wait(150))
+    .then(() => tween(400, (e) => { victim.position.y = -1.8 * e; }))
     .then(() => dropPiece(victim));
 }
 
@@ -1484,7 +1484,7 @@ async function maybeComputerMove() {
   const id = game.id, started = performance.now();
   game.busy = true; updateHud();
   const uci = await askEngine(game.pos.fen(), game.level);
-  const pause = 60 - (performance.now() - started);
+  const pause = 400 - (performance.now() - started);
   if (pause > 0) await new Promise((r) => setTimeout(r, pause));
   if (id !== game.id) return;
   const m = game.legal.find((x) => E.uci(x) === uci) || game.legal[0];
