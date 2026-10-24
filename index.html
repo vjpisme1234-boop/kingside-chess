@@ -841,7 +841,7 @@ function loadBusts(name) {
         copy.position.set(-c.x, -box.min.y, -c.z);
         const node = new THREE.Group(); node.add(copy);
         node.scale.setScalar(scale); node.rotation.y = -Math.PI / 2;
-        staticSets[name][color | type] = { node, height: size.y * scale, yaw: color === E.WHITE ? Math.PI : 0, cut: 0.76 };
+        staticSets[name][color | type] = { node, height: size.y * scale, bust: true, cut: 0.76 };
       }
     }
   })();
@@ -874,9 +874,9 @@ async function setStyle(next) {
 // camera, looking down at about 45°, sees each one side-on instead of foreshortened. The piece
 // turns by yaw, so its own lean direction flips when that turn faces it the other way. Each bent version
 // is made the first time it's needed.
-function staticNode(t) {
+function staticNode(t, yaw) {
   if (!settings.bend) return t.node;
-  const toward = game.human === E.BLACK ? 1 : -1, dir = Math.cos(t.yaw || 0) > 0 ? toward : -toward;
+  const toward = game.human === E.BLACK ? 1 : -1, dir = Math.cos(yaw) > 0 ? toward : -toward;
   t.bent ||= {};
   if (!t.bent[dir]) { t.bent[dir] = t.node.clone(true); bendUp(t.bent[dir], dir); }
   return t.bent[dir];
@@ -886,9 +886,11 @@ function makeStaticPiece(code, sq) {
   const t = staticSets[style][code], piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
   const char = new THREE.Group(), tilt = new THREE.Group();
-  tilt.add(staticNode(t).clone(true));
+  // Busts on both sides face the player's camera (+z when playing White), so you see every face.
+  const yaw = t.bust && game.human === E.BLACK ? Math.PI : 0;
+  tilt.add(staticNode(t, yaw).clone(true));
   char.add(tilt);
-  char.rotation.y = t.yaw || 0;
+  char.rotation.y = yaw;
   piece.add(char);
   const height = t.height;
   const picker = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, height + 0.1, 12), pickMat);
