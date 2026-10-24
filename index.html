@@ -1140,6 +1140,7 @@ async function setStyle(next) {
   clearPieces();
   syncPieces();
   drawMarks();
+  showView();
 }
 
 // With "Bent pieces" on, every piece bends right back away from the player (-z when playing White) until
@@ -2335,6 +2336,7 @@ for (const id of ['mdAi', 'mdOnline']) $(id).addEventListener('change', refreshS
 // Picking a style swaps the pieces on the board behind the card right away.
 const STYLE_INPUTS = { fighters: 'stFighters', classic: 'stClassic', egypt: 'stEgypt', medieval: 'stMedieval' };
 for (const [next, id] of Object.entries(STYLE_INPUTS)) $(id).addEventListener('change', () => {
+  queueMicrotask(showView); // the flat board switches sets at once
   settings.style = next;
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   setStyle(next);
@@ -2681,12 +2683,69 @@ const PIECES_2D = {
   wR: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="%23fff" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath stroke-linecap="butt" d="M9 39h27v-3H9zm3-3v-4h21v4zm-1-22V9h4v2h5V9h5v2h5V9h4v5"/%3E%3Cpath d="m34 14-3 3H14l-3-3"/%3E%3Cpath stroke-linecap="butt" stroke-linejoin="miter" d="M31 17v12.5H14V17"/%3E%3Cpath d="m31 29.5 1.5 2.5h-20l1.5-2.5"/%3E%3Cpath fill="none" stroke-linejoin="miter" d="M11 14h23"/%3E%3C/g%3E%3C/svg%3E'
 };
 const LETTER = [' ', 'P', 'N', 'B', 'R', 'Q', 'K'];
+
+// The bust sets have flat pictures of their own (cut out of the clean reference images), tinted per side
+// like the 3D pieces: ivory or charcoal, gold kept where the set has gold, plus a thin outline. Made once
+// per set; until they're ready (or for the other sets) the cburnett pieces stand in.
+// gold: [HSV saturation that counts as gold, top part of the picture where less saturated gold counts too, its threshold]
+const PICS_2D = {
+  egypt: { [E.KING]: [0.5, 0.52, 0.25] },
+  medieval: { [E.KING]: [0.3], [E.QUEEN]: [0.3] }
+};
+const pics2d = {};   // style -> code -> data URL
+async function load2dPics(set) {
+  if (!PICS_2D[set] || pics2d[set]) return;
+  pics2d[set] = {};
+  const S = 256, kinds = Object.keys(BUST_NAMES).map(Number);
+  await Promise.all(kinds.map(async (type) => {
+    const img = new Image();
+    img.src = `pieces2d/${set}-${BUST_NAMES[type]}.png`;
+    await img.decode();
+    const src = document.createElement('canvas'); src.width = src.height = S;
+    const sg = src.getContext('2d', { willReadFrequently: true }); sg.drawImage(img, 0, 0, S, S);
+    const base = sg.getImageData(0, 0, S, S), gold = PICS_2D[set][type];
+    for (const color of [E.WHITE, E.BLACK]) {
+      const out = new ImageData(S, S), d = base.data, o = out.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255, hi = Math.max(r, g, b), sat = hi ? (hi - Math.min(r, g, b)) / hi : 0;
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b, y = Math.floor(i / 4 / S) / S;
+        const thr = gold ? (gold[1] && y < gold[1] ? gold[2] : gold[0]) : 9;
+        const isGold = sat > thr && hi > 0.2 && g >= b && g <= r + 0.02;
+        let v;
+        if (isGold) v = [Math.min(1, r * 1.25), Math.min(1, g * 1.2), b];
+        else if (color === E.WHITE) { const k = 0.5 + 0.55 * lum; v = [0.95 * k, 0.93 * k, 0.88 * k]; }
+        else { const k = 0.07 + 0.42 * lum; v = [k, k, k * 1.05]; }
+        o[i] = v[0] * 255; o[i + 1] = v[1] * 255; o[i + 2] = v[2] * 255; o[i + 3] = d[i + 3];
+      }
+      const c = document.createElement('canvas'); c.width = c.height = S;
+      const g = c.getContext('2d');
+      // Outline: the silhouette stamped around in a ring, dark for White, light for Black, then the piece on top.
+      const tinted = document.createElement('canvas'); tinted.width = tinted.height = S;
+      tinted.getContext('2d').putImageData(out, 0, 0);
+      const sil = document.createElement('canvas'); sil.width = sil.height = S;
+      const sc = sil.getContext('2d');
+      sc.drawImage(tinted, 0, 0); sc.globalCompositeOperation = 'source-in';
+      sc.fillStyle = color === E.WHITE ? 'rgba(20, 16, 12, 0.95)' : 'rgba(236, 226, 205, 0.85)'; sc.fillRect(0, 0, S, S);
+      for (let a = 0; a < 16; a++) g.drawImage(sil, Math.cos(a / 8 * Math.PI) * 3.5, Math.sin(a / 8 * Math.PI) * 3.5);
+      g.drawImage(tinted, 0, 0);
+      pics2d[set][color | type] = c.toDataURL('image/png');
+    }
+  }));
+  render2d();
+}
+// 2D follows the chosen set straight away; it doesn't wait for that set's 3D models to load.
+const style2d = () => settings.style || 'fighters';
+function piece2d(code) {
+  return pics2d[style2d()]?.[code] || PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
+}
 const board2d = $('board2d');
 let anim2d = null, drag2d = null;
 
 function square2d(sq) { return board2d.querySelector(`[data-sq="${sq}"]`); }
 function render2d() {
   if (!is2d()) return;
+  const set = style2d();
+  if (PICS_2D[set] && !pics2d[set]) load2dPics(set).catch(() => { delete pics2d[set]; });
   const flip = game.human === E.BLACK, b = viewPly === null ? game.pos.b : positionAt(viewPly).b;
   const last = game.history[(viewPly ?? game.history.length) - 1];
   const lastSq = last ? [E.sqParse(last.uci.slice(0, 2)), E.sqParse(last.uci.slice(2, 4))] : [];
@@ -2707,7 +2766,7 @@ function render2d() {
     const code = b[sq];
     if (code) {
       const img = document.createElement('img');
-      img.src = PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
+      img.src = piece2d(code);
       img.alt = '';
       if (drag2d?.moving && drag2d.sq === sq) img.className = 'lift';
       el.append(img);
@@ -2741,7 +2800,7 @@ board2d.addEventListener('pointerdown', (e) => {
   if (mine) {
     const ghost = document.createElement('img'), size = board2d.getBoundingClientRect().width / 8;
     ghost.className = 'drag2d'; ghost.alt = '';
-    ghost.src = PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
+    ghost.src = piece2d(code);
     Object.assign(ghost.style, { width: size * 1.1 + 'px', height: size * 1.1 + 'px', display: 'none' });
     document.body.append(ghost);
     drag2d.ghost = ghost;
@@ -2787,6 +2846,7 @@ function showView() {
   $('viewModeBtn').title = flat2d ? 'Back to the 3D board' : 'Flat 2D board';
   $('viewModeBtn').setAttribute('aria-label', flat2d ? 'Switch to the 3D board' : 'Switch to the flat 2D board');
   $('lockBtn').hidden = $('viewBtn').hidden = flat2d;
+  $('credit').hidden = !flat2d || !!PICS_2D[style2d()];
   render2d();
 }
 $('viewModeBtn').onclick = () => { settings.view = is2d() ? '3d' : '2d'; saveSettings(); showView(); };
