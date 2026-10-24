@@ -2135,6 +2135,95 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (f >= 0 && f < 8 && r >= 0 && r < 8) onSquare(r * 8 + f);
 });
 
+// Drag and swipe: press on one of your pieces and pull. It lifts and follows the pointer over the board;
+// letting go on a legal square plays the move, anywhere else slides it home. A quick flick plays the
+// legal move that best matches the flick's direction. A press that doesn't move is a tap (handled above),
+// and dragging empty board still turns the camera.
+const canMove = () => game.started && !game.over && !game.busy && game.pos.turn === game.human &&
+  (game.mode !== 'online' || !!(online.game && online.game.status === 'playing' && online.game.mine !== null));
+const hoverMark = flat(squareGeo, 0xffffff, 0.35);
+hoverMark.visible = false;
+scene.add(hoverMark);
+let drag = null;
+
+function pointerRay(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  return ray.intersectObject(pickPlane)[0]?.point || null;
+}
+function squareAt(p) {
+  const f = Math.floor(p.x + 4), r = Math.floor(4 - p.z);
+  return f >= 0 && f < 8 && r >= 0 && r < 8 ? r * 8 + f : -1;
+}
+function slideHome(piece, sq) {
+  const id = ++piece.userData.motion, a = piece.position.clone(), b = sqPos(sq);
+  tween(140, (e) => { if (piece.userData.motion !== id) return false; piece.position.lerpVectors(a, b, e); }, easeOut);
+}
+// The legal destination closest in direction to a flick (within about 25°), preferring a matching length.
+function flickTarget(sq, p) {
+  const from = sqPos(sq), dir = new THREE.Vector2(p.x - from.x, p.z - from.z);
+  if (dir.length() < 0.25) return -1;
+  let best = -1, bestScore = Infinity;
+  for (const m of game.legal) {
+    if (E.from(m) !== sq) continue;
+    const t = sqPos(E.to(m)), v = new THREE.Vector2(t.x - from.x, t.z - from.z);
+    const angle = Math.abs(Math.atan2(dir.x * v.y - dir.y * v.x, dir.dot(v)));
+    if (angle > 0.45) continue;
+    const score = angle * 3 + Math.abs(v.length() - dir.length() * 1.5) * 0.5;
+    if (score < bestScore) { bestScore = score; best = E.to(m); }
+  }
+  return best;
+}
+
+// Capture phase, so the camera controls hear about the press only when it isn't on one of your pieces.
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary || !canMove()) return;
+  pointerRay(e);
+  // The first piece along the ray that can move: a back-rank piece's pick area can cover the pawn behind it.
+  const piece = ray.intersectObjects(pickers, false).map((h) => h.object.userData.piece)
+    .find((pc) => game.legal.some((m) => E.from(m) === pc.userData.sq));
+  if (!piece) return;
+  const sq = piece.userData.sq;
+  controls.enabled = false;
+  drag = { piece, sq, id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), moving: false };
+}, { capture: true });
+
+addEventListener('pointermove', (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.moving) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 7) return;
+    drag.moving = true;
+    drag.piece.userData.motion++; // stop any slide still running
+    if (selected !== drag.sq) { setSelected(drag.sq); drawMarks(); }
+  }
+  const p = pointerRay(e);
+  if (!p) return;
+  drag.piece.position.set(p.x, 0.3, p.z);
+  const over = squareAt(p);
+  hoverMark.visible = over >= 0;
+  if (over >= 0) hoverMark.position.copy(sqPos(over, 0.007));
+});
+
+function endDrag(e, cancel) {
+  if (!drag || e.pointerId !== drag.id) return;
+  const d = drag;
+  drag = null;
+  hoverMark.visible = false;
+  showLock(); // gives the camera back, unless the board is locked
+  if (!d.moving) return;
+  const p = cancel ? null : pointerRay(e);
+  const legal = (to) => game.legal.filter((m) => E.from(m) === d.sq && E.to(m) === to);
+  let to = p ? squareAt(p) : -1;
+  if (p && !legal(to).length && performance.now() - d.t < 260) to = flickTarget(d.sq, p);
+  const options = to >= 0 && canMove() ? legal(to) : [];
+  if (options.length !== 1) slideHome(d.piece, d.sq);
+  if (options.length > 1) openPromotion(options);
+  else if (options.length === 1) humanMove(options[0]);
+}
+addEventListener('pointerup', (e) => endDrag(e, false));
+addEventListener('pointercancel', (e) => endDrag(e, true));
+
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   renderer.setSize(w, h, false);
