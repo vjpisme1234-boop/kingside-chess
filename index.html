@@ -272,7 +272,7 @@
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
-      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, so you can tell them apart from above. Not the Fighters.</em></span></label>
+      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
     </fieldset>
     <fieldset>
       <legend>Speed</legend>
@@ -733,7 +733,7 @@ function classicMat(m) {
 // `from` and `to` (fractions of the height) curves, so everything above it tips over by `angle` toward
 // `dir` (+1 = +z, -1 = -z in the piece's own frame). Each mesh gets its own float copy of its geometry (the files are quantized, and both
 // sides' copies share the source geometry).
-function bendUp(node, dir, from = 0.12, to = 0.42, angle = 0.7) {
+function bendUp(node, dir, from = 0.12, to = 0.42, angle = Math.PI / 2) {
   node.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(node);
   const y0 = box.min.y + (box.max.y - box.min.y) * from, len = (box.max.y - box.min.y) * (to - from), R = len / angle;
@@ -870,8 +870,8 @@ async function setStyle(next) {
   drawMarks();
 }
 
-// With "Bent pieces" on, every piece leans away from the player's camera (-z when playing White), so the
-// camera, looking down at about 45°, sees each one side-on instead of foreshortened. The piece
+// With "Bent pieces" on, every piece bends right back away from the player (-z when playing White) until
+// its top lies flat and the busts' faces, turned toward the player, look straight up at the sky. The piece
 // turns by yaw, so its own lean direction flips when that turn faces it the other way. Each bent version
 // is made the first time it's needed.
 function staticNode(t, yaw) {
