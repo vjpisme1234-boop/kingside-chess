@@ -242,7 +242,7 @@
   .movelist button { all: unset; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
   .movelist button:hover { background: rgba(236, 226, 205, 0.08); }
   .movelist button.now { background: rgba(210, 168, 90, 0.25); color: var(--ivory); }
-  .movelist .empty { padding: 4px 2px; }
+  .movelist li.empty { display: block; padding: 4px 2px; }
   .movenav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .movenav button { padding: 7px 0; border-radius: 9px; border: 1px solid var(--line); background: transparent; font-size: 13px; }
   .movenav button:disabled { opacity: 0.35; cursor: default; }
@@ -427,7 +427,6 @@
     <fieldset>
       <legend>Pieces</legend>
       <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
-      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
     </fieldset>
     <fieldset>
       <legend>Speed</legend>
@@ -976,45 +975,6 @@ function classicMat(m) {
   return classicMats.get(m);
 }
 
-// Bends a standing piece like a chess-piece wall hook: the base stays on its square and the stem between
-// `from` and `to` (fractions of the height) curves, so everything above it tips over by `angle` toward
-// `dir` (+1 = +z, -1 = -z in the piece's own frame). Each mesh gets its own float copy of its geometry (the files are quantized, and both
-// sides' copies share the source geometry).
-function bendUp(node, dir, from = 0.12, to = 0.42, angle = Math.PI / 2) {
-  node.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(node);
-  const y0 = box.min.y + (box.max.y - box.min.y) * from, len = (box.max.y - box.min.y) * (to - from), R = len / angle;
-  const v = new THREE.Vector3(), n = new THREE.Vector3(), inv = new THREE.Matrix4(), toNode = new THREE.Matrix3(), back = new THREE.Matrix3();
-  node.traverse((m) => {
-    if (!m.isMesh) return;
-    const g = m.geometry = m.geometry.clone(), src = g.attributes.position, nsrc = g.attributes.normal;
-    const pos = new THREE.BufferAttribute(new Float32Array(src.count * 3), 3);
-    const nor = nsrc && new THREE.BufferAttribute(new Float32Array(nsrc.count * 3), 3);
-    inv.copy(m.matrixWorld).invert();
-    toNode.getNormalMatrix(m.matrixWorld); back.getNormalMatrix(inv);
-    for (let i = 0; i < src.count; i++) {
-      v.fromBufferAttribute(src, i).applyMatrix4(m.matrixWorld);
-      // Bend around an axis parallel to x, R away from the stem: the arc for the stem, then straight on.
-      const h = v.y - y0, z = v.z * dir;
-      const th = THREE.MathUtils.clamp(h / R, 0, angle), past = Math.max(0, h - len);
-      if (h > 0) {
-        const c = Math.cos(th), sn = Math.sin(th);
-        v.y = y0 + (R - z) * sn + past * c;
-        v.z = (R - (R - z) * c + past * sn) * dir;
-      }
-      pos.setXYZ(i, ...v.applyMatrix4(inv).toArray());
-      if (!nor) continue;
-      n.fromBufferAttribute(nsrc, i).applyMatrix3(toNode);
-      const c = Math.cos(th), sn = Math.sin(th), ny = n.y, nz = n.z * dir;
-      n.y = ny * c - nz * sn; n.z = (ny * sn + nz * c) * dir;
-      nor.setXYZ(i, ...n.normalize().applyMatrix3(back).normalize().toArray());
-    }
-    g.setAttribute('position', pos);
-    if (nor) g.setAttribute('normal', nor);
-    g.computeBoundingBox(); g.computeBoundingSphere();
-  });
-}
-
 // A copy of src (in its file's world space) standing centred on its base at the origin.
 function standClassic(src, scale, yaw) {
   const copy = src.clone(true);
@@ -1143,25 +1103,13 @@ async function setStyle(next) {
   showView();
 }
 
-// With "Bent pieces" on, every piece bends right back away from the player (-z when playing White) until
-// its top lies flat and the busts' faces, turned toward the player, look straight up at the sky. The piece
-// turns by yaw, so its own lean direction flips when that turn faces it the other way. Each bent version
-// is made the first time it's needed.
-function staticNode(t, yaw) {
-  if (!settings.bend) return t.node;
-  const toward = game.human === E.BLACK ? 1 : -1, dir = Math.cos(yaw) > 0 ? toward : -toward;
-  t.bent ||= {};
-  if (!t.bent[dir]) { t.bent[dir] = t.node.clone(true); bendUp(t.bent[dir], dir); }
-  return t.bent[dir];
-}
-
 function makeStaticPiece(code, sq) {
   const t = staticSets[style][code], piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
   const char = new THREE.Group(), tilt = new THREE.Group();
   // Busts on both sides face the player's camera (+z when playing White), so you see every face.
   const yaw = t.bust && game.human === E.BLACK ? Math.PI : 0;
-  const model = staticNode(t, yaw).clone(true);
+  const model = t.node.clone(true);
   if (settings.outline !== false) addOutlines(model);
   tilt.add(model);
   char.add(tilt);
@@ -1439,6 +1387,7 @@ function turnTo(piece, yaw, ms) {
 // Moves a piece to a square. A newer move of the same piece cancels this one mid-way.
 function glide(piece, toSq, ms) {
   const id = ++piece.userData.motion, a = piece.position.clone(), b = sqPos(toSq);
+  if (piece.userData.lookUp) { piece.userData.lookUp = false; piece.userData.tilt.rotation.x = 0; } // stands up to move
   piece.userData.sq = toSq;
   if (!piece.userData.static) piece.userData.char.rotation.y = angleTo(a, b);
   return tween(ms, (e) => {
@@ -1774,7 +1723,7 @@ function selectedPiece() { return selected >= 0 ? pieces.get(selected) : null; }
 // ------------------------------------------------------------------ game
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-let settings = { level: 'medium', side: 'w', bend: false, speed: 1 };
+let settings = { level: 'medium', side: 'w', speed: 1 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('kingside.settings') || '{}')); } catch {}
 applySpeed();
 // mode: 'ai' (vs computer) or 'online' (vs a friend through the shared database).
@@ -1834,7 +1783,7 @@ function resetBoard() {
 function newGame(side, level) {
   leaveOnline(true);
   game.mode = 'ai';
-  game.human = side === 'b' ? E.BLACK : E.WHITE; // before the pieces are made: bent ones lean toward this side
+  game.human = side === 'b' ? E.BLACK : E.WHITE;
   resetBoard();
   game.level = level; game.started = true;
   const c = CLOCKS[settings.clock];
@@ -1843,7 +1792,36 @@ function newGame(side, level) {
   aimCamera(true);
   controls.autoRotate = false;
   if (soundOn('startend')) sfx.cue('start');
+  introOrbit();
   maybeComputerMove();
+}
+
+// Game start: the camera makes one slow full circle round the board, then every piece turns to the
+// camera and tips its head back to look up at it. Dragging the board cuts the circle short.
+let introId = 0;
+function introOrbit() {
+  const id = ++introId;
+  if (reduceMotion || is2d()) { piecesLookUp(); return; }
+  const start = new THREE.Spherical().setFromVector3(camera.position), s = start.clone();
+  const stop = () => { introId++; };
+  controls.addEventListener('start', stop);
+  tween(9000, (e) => {
+    if (id !== introId) return false;
+    s.theta = start.theta + e * Math.PI * 2;
+    camera.position.setFromSpherical(s);
+  }, (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2)).then(() => {
+    controls.removeEventListener('start', stop);
+    if (game.started && !game.over) piecesLookUp();
+  });
+}
+function piecesLookUp() {
+  for (const piece of pieces.values()) {
+    const yaw = angleTo(piece.position, camera.position), tilt = piece.userData.tilt, from = tilt.rotation.x;
+    piece.userData.facing = yaw;
+    piece.userData.lookUp = true;
+    turnTo(piece, yaw, 450);
+    tween(450, (e) => { if (!piece.userData.lookUp) return false; tilt.rotation.x = from + (-0.32 - from) * e; }, easeOut);
+  }
 }
 
 function gameOverCheck() {
@@ -2345,14 +2323,8 @@ for (const [next, id] of Object.entries(STYLE_INPUTS)) $(id).addEventListener('c
 // Bending and speed apply right away too, even mid-game.
 const saveSettings = () => { try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {} };
 function showSpeed() { $('speedOut').textContent = `${+$('speedDial').value}×`; }
-$('bendBox').addEventListener('change', () => {
-  settings.bend = $('bendBox').checked;
-  saveSettings();
-  if (staticSets[style]) { clearPieces(); syncPieces(); drawMarks(); }
-});
 // ---- Settings (look and sound)
 function openPrefs() {
-  $('bendBox').checked = !!settings.bend;
   $('outlineBox').checked = settings.outline !== false;
   $('speedDial').value = settings.speed || 1;
   showSpeed();
