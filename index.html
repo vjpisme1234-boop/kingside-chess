@@ -188,6 +188,70 @@
     backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-size: 14px;
   }
 
+  .view-btn { font: 700 13px var(--font-body); letter-spacing: 0.02em; }
+  /* Flat board: chess.com-style greens, coordinates in the edge squares. */
+  .board2d {
+    --size: min(calc(100vw - 280px), calc(100vh - 170px), 760px);
+    position: fixed; z-index: 2; left: calc(50% - 115px); top: calc(50% + 6px); transform: translate(-50%, -50%);
+    width: var(--size); height: var(--size); display: grid; grid-template: repeat(8, 1fr) / repeat(8, 1fr);
+    border-radius: 6px; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); touch-action: none; user-select: none;
+  }
+  .board2d .sq { position: relative; }
+  .board2d .sq.light { background: #eeeed2; } .board2d .sq.dark { background: #769656; }
+  .board2d .sq.last::before, .board2d .sq.sel::before, .board2d .sq.pre::before, .board2d .sq.over::before { content: ''; position: absolute; inset: 0; }
+  .board2d .sq.last::before { background: rgba(255, 255, 51, 0.42); }
+  .board2d .sq.sel::before { background: rgba(255, 255, 51, 0.55); }
+  .board2d .sq.pre::before { background: rgba(210, 60, 50, 0.6); }
+  .board2d .sq.over::before { box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.75); }
+  .board2d .sq.check { background-image: radial-gradient(circle, rgba(255, 0, 0, 0.9) 0%, rgba(231, 0, 0, 0.6) 30%, rgba(169, 0, 0, 0) 75%); }
+  .board2d .coord { position: absolute; font: 700 calc(var(--size) / 48) var(--font-body); pointer-events: none; }
+  .board2d .coord.rank { top: 3%; left: 4%; } .board2d .coord.file { bottom: 2%; right: 5%; }
+  .board2d .sq.light .coord { color: #769656; } .board2d .sq.dark .coord { color: #eeeed2; }
+  .board2d .dot { position: absolute; inset: 35%; border-radius: 50%; background: rgba(0, 0, 0, 0.14); pointer-events: none; }
+  .board2d .ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 calc(var(--size) / 110) rgba(0, 0, 0, 0.14); pointer-events: none; }
+  .board2d img { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
+  .board2d img.lift { opacity: 0.35; }
+  .drag2d { position: fixed; z-index: 30; pointer-events: none; transform: translate(-50%, -50%); }
+  .credit { position: fixed; z-index: 1; right: 12px; bottom: 4px; font-size: 10px; color: var(--muted); opacity: 0.7; }
+  @media (max-width: 760px) {
+    .board2d { --size: min(calc(100vw - 32px), calc(100vh - 300px)); left: 50%; top: calc(50% - 30px); }
+  }
+  .movebox {
+    position: fixed; z-index: 5; right: max(16px, env(safe-area-inset-right, 0px)); top: calc(66px + env(safe-area-inset-top, 0px));
+    width: 210px; max-height: calc(100% - 180px); display: flex; flex-direction: column; gap: 8px;
+    padding: 10px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  }
+  .movelist { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; font: 500 14px var(--font-mono); font-variant-numeric: tabular-nums; }
+  .movelist li { display: grid; grid-template-columns: 2.4em 1fr 1fr; align-items: center; }
+  .movelist li i { font-style: normal; color: var(--muted); font-size: 12px; }
+  .movelist button { all: unset; cursor: pointer; padding: 3px 6px; border-radius: 6px; }
+  .movelist button:hover { background: rgba(236, 226, 205, 0.08); }
+  .movelist button.now { background: rgba(210, 168, 90, 0.25); color: var(--ivory); }
+  .movelist .empty { padding: 4px 2px; }
+  .movenav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .movenav button { padding: 7px 0; border-radius: 9px; border: 1px solid var(--line); background: transparent; font-size: 13px; }
+  .movenav button:disabled { opacity: 0.35; cursor: default; }
+  .clock {
+    padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); text-align: right;
+    font: 500 22px/1 var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+  .clock.running { color: var(--brass-ink); background: var(--ivory); border-color: var(--ivory); }
+  .clock.low.running { background: var(--alert); border-color: var(--alert); color: #fff; }
+  .clocks-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .clocks-row .choice span { display: flex; justify-content: center; padding: 10px 6px; border-radius: 12px; border: 1px solid var(--line); cursor: pointer; font-weight: 500; }
+  @media (max-width: 760px) {
+    .movebox {
+      left: max(16px, env(safe-area-inset-left, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); width: auto; top: auto;
+      bottom: calc(84px + env(safe-area-inset-bottom, 0px)); max-height: none;
+      display: grid; grid-template-columns: auto 1fr auto; grid-template-areas: "top list bottom" "nav nav nav"; align-items: center;
+    }
+    #clockTop { grid-area: top; } #clockBottom { grid-area: bottom; } .movelist { grid-area: list; } .movenav { grid-area: nav; }
+    .movelist { display: flex; overflow-x: auto; overflow-y: hidden; white-space: nowrap; gap: 2px; }
+    .movelist li { display: flex; }
+    .clock { font-size: 17px; padding: 7px 9px; }
+  }
+
   .glyph { font-family: 'Segoe UI Symbol', 'Apple Symbols', 'DejaVu Sans', var(--font-body); font-variant-emoji: text; }
 
   @media (max-width: 560px) {
@@ -215,6 +279,7 @@
     <button class="icon-btn" id="soundBtn" type="button" title="Sound" aria-label="Sound on" aria-pressed="true">
       <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path id="soundOff" d="M17 9l5 6M22 9l-5 6" hidden/></svg>
     </button>
+    <button class="icon-btn view-btn" id="viewModeBtn" type="button" title="Flat 2D board" aria-label="Switch to the flat 2D board">2D</button>
     <button class="icon-btn" id="lockBtn" type="button" title="Lock the board" aria-label="Board unlocked" aria-pressed="false">
       <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path id="lockShackle" d="M8 11V8a4 4 0 0 1 7.6-1.7"/></svg>
     </button>
@@ -237,6 +302,20 @@
     <span class="lastmove" id="lastMove"><span class="empty">None</span></span>
   </div>
 </footer>
+
+<div class="board2d" id="board2d" hidden aria-label="Chess board, flat view"></div>
+
+<aside class="movebox" id="moveBox" hidden aria-label="Moves">
+  <div class="clock" id="clockTop" hidden></div>
+  <ol class="movelist" id="moveList"></ol>
+  <div class="movenav">
+    <button type="button" id="navFirst" title="First move" aria-label="First move">⏮</button>
+    <button type="button" id="navPrev" title="Back one move" aria-label="Back one move">◀</button>
+    <button type="button" id="navNext" title="Forward one move" aria-label="Forward one move">▶</button>
+    <button type="button" id="navLast" title="Back to the game" aria-label="Back to the game">⏭</button>
+  </div>
+  <div class="clock" id="clockBottom" hidden></div>
+</aside>
 
 <div class="scrim" id="loadDlg">
   <div class="card loading">
@@ -279,6 +358,24 @@
       </div>
       <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
       <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
+    </fieldset>
+    <fieldset id="clockSet">
+      <legend>Clock</legend>
+      <div class="clocks-row">
+        <label class="choice"><input type="radio" name="clock" value="none" checked><span>No clock</span></label>
+        <label class="choice"><input type="radio" name="clock" value="1"><span>1 min</span></label>
+        <label class="choice"><input type="radio" name="clock" value="3+2"><span>3 | 2</span></label>
+        <label class="choice"><input type="radio" name="clock" value="5"><span>5 min</span></label>
+        <label class="choice"><input type="radio" name="clock" value="10"><span>10 min</span></label>
+        <label class="choice"><input type="radio" name="clock" value="15+10"><span>15 | 10</span></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Sounds</legend>
+      <div class="modes">
+        <label class="choice"><input type="radio" name="sounds" id="snBattle" value="battle" checked><span><b>Battle</b><em>Swooshes, slashes, grunts</em></span></label>
+        <label class="choice"><input type="radio" name="sounds" id="snBoard" value="board"><span><b>Board</b><em>Wooden clicks, like chess.com</em></span></label>
+      </div>
     </fieldset>
     <fieldset>
       <legend>Speed</legend>
@@ -333,6 +430,7 @@
 </div>
 
 <div class="toast" id="toast" role="alert" hidden></div>
+<div class="credit" id="credit" hidden>Flat pieces: Colin M.L. Burnett (GPLv2+)</div>
 
 <div class="scrim" id="endDlg" hidden>
   <div class="card">
@@ -503,12 +601,19 @@ const glowTex = (() => {
 function clearMarks() { while (marks.children.length) marks.remove(marks.children[0]); }
 function addMark(mesh, sq, y) { mesh.position.copy(sqPos(sq, y)); marks.add(mesh); return mesh; }
 
+const is2d = () => settings.view === '2d';
 function drawMarks() {
   clearMarks();
-  const last = game.history[game.history.length - 1];
+  render2d();
+  const last = game.history[(viewPly ?? game.history.length) - 1];
   if (last) {
     addMark(flat(squareGeo, 0xe0b45e, 0.32), E.sqParse(last.uci.slice(0, 2)), 0.003);
     addMark(flat(squareGeo, 0xe0b45e, 0.42), E.sqParse(last.uci.slice(2, 4)), 0.003);
+  }
+  if (viewPly !== null) return; // looking back: just the move that was played
+  if (premove) {
+    addMark(flat(squareGeo, 0xd2453a, 0.5), premove.from, 0.0035);
+    addMark(flat(squareGeo, 0xd2453a, 0.6), premove.to, 0.0035);
   }
   if (game.pos.inCheck() && !game.over) {
     const glow = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), new THREE.MeshBasicMaterial({ map: glowTex, transparent: true, depthWrite: false }));
@@ -518,7 +623,7 @@ function drawMarks() {
   if (selected >= 0) {
     addMark(flat(squareGeo, 0xf3d28f, 0.55), selected, 0.004);
     const seen = new Set();
-    for (const m of game.legal) {
+    for (const m of movesFor()) {
       if (E.from(m) !== selected || seen.has(E.to(m))) continue;
       const to = E.to(m); seen.add(to);
       const capture = game.pos.b[to] || E.flag(m) === E.F_EP;
@@ -991,7 +1096,7 @@ function dropPiece(piece) {
 
 // Make the 3D pieces match the position exactly (used on load, new game and restore).
 function syncPieces() {
-  const b = game.pos.b;
+  const b = viewPly === null ? game.pos.b : positionAt(viewPly).b;
   for (const [sq, piece] of pieces) {
     if (b[sq] !== piece.userData.code) { dropPiece(piece); pieces.delete(sq); }
   }
@@ -1010,9 +1115,19 @@ function clearPieces() {
 const SAMPLES = {
   slash: [{ file: 'slash1', start: 0, len: 0.25, peak: 0.43 }, { file: 'slash2', start: 0.01, len: 0.25, peak: 0.74 }, { file: 'slash3', start: 0.06, len: 0.28, peak: 0.72 }],
   slide: [{ file: 'slide1', start: 0, len: 0.42, peak: 0.32 }, { file: 'slide2', start: 0.04, len: 0.48, peak: 0.27 }, { file: 'slide3', start: 0.18, len: 0.46, peak: 0.43 }],
-  ugh: [{ file: 'ugh1', start: 0.46, len: 0.36, peak: 0.37 }, { file: 'ugh2', start: 0, len: 0.3, peak: 0.31 }, { file: 'ugh3', start: 0, len: 0.26, peak: 0.43 }]
+  ugh: [{ file: 'ugh1', start: 0.46, len: 0.36, peak: 0.37 }, { file: 'ugh2', start: 0, len: 0.3, peak: 0.31 }, { file: 'ugh3', start: 0, len: 0.26, peak: 0.43 }],
+  // Board sounds (chess.com style), also Magnific: wooden clicks and short chimes.
+  move: [{ file: 'move2', start: 0.01, len: 0.16, peak: 0.36 }, { file: 'move3', start: 0.09, len: 0.3, peak: 0.98 }],
+  capture: [{ file: 'capture1', start: 0.25, len: 0.3, peak: 0.77 }, { file: 'capture2', start: 0.02, len: 0.28, peak: 0.95 }],
+  castle: [{ file: 'castle1', start: 0.22, len: 0.19, peak: 0.98 }, { file: 'castle2', start: 0, len: 0.46, peak: 0.97 }],
+  check: [{ file: 'check1', start: 0, len: 0.7, peak: 0.76 }, { file: 'check2', start: 0, len: 0.7, peak: 0.12 }],
+  promote: [{ file: 'promote1', start: 0, len: 0.55, peak: 0.39 }, { file: 'promote2', start: 0, len: 0.6, peak: 0.99 }],
+  start: [{ file: 'start1', start: 0, len: 1.4, peak: 0.39 }, { file: 'start2', start: 0, len: 1.6, peak: 1 }],
+  end: [{ file: 'end1', start: 0, len: 1.1, peak: 0.81 }, { file: 'end2', start: 0, len: 1.6, peak: 0.81 }]
 };
-const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42 };
+const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42, move: 0.5, capture: 0.55, castle: 0.5, check: 0.35, promote: 0.4, start: 0.35, end: 0.4 };
+// "battle": slides, slashes and grunts for moves and kills; "board": wooden clicks. Chimes play in both.
+const boardSounds = () => settings.sounds === 'board';
 const sampleBytes = Object.values(SAMPLES).flat().map((c) => fetchBytes('sounds/' + c.file + '.mp3', () => {}).catch(() => null));
 
 const sfx = (() => {
@@ -1121,8 +1236,10 @@ const sfx = (() => {
     lp.connect(out).connect(master);
     voice.start(t); voice.stop(t + dur + 0.02);
   }
+  // A board sound or chime by name; quietly nothing if it hasn't loaded.
+  function cue(kind) { if (ready()) sample(kind); }
   return {
-    unlock, slide, slash, ugh,
+    unlock, slide, slash, ugh, cue,
     get loaded() { return Object.fromEntries(Object.entries(decoded).map(([k, v]) => [k, v.length])); },
     get on() { return on; },
     set on(v) { on = v; try { localStorage.setItem('kingside.sound', v ? 'on' : 'off'); } catch {} }
@@ -1195,7 +1312,7 @@ function glide(piece, toSq, ms) {
 
 async function quietMove(piece, toSq, silent) {
   const dist = piece.position.distanceTo(sqPos(toSq));
-  if (!silent) sfx.slide((140 + dist * 25) / 1000);
+  if (!silent && !boardSounds()) sfx.slide((140 + dist * 25) / 1000);
   play(piece, 'idle', { time: Math.random() });
   const id = piece.userData.motion + 1;
   piece.userData.busy = true;
@@ -1209,7 +1326,7 @@ async function quietMove(piece, toSq, silent) {
 async function killMove(attacker, victim, toSq) {
   const dist = attacker.position.distanceTo(sqPos(toSq));
   const ms = Math.min(400, 175 + dist * 32);
-  sfx.slide(ms / 1000);
+  if (!boardSounds()) sfx.slide(ms / 1000);
   const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
   victim.userData.motion++; // stop it if it was still sliding, and put it on its square
   victim.position.copy(sqPos(victim.userData.sq));
@@ -1230,8 +1347,7 @@ async function killMove(attacker, victim, toSq) {
   attacker.userData.busy = true;
   const arrived = glide(attacker, toSq, ms);
   await wait(ms * 0.82);
-  sfx.slash();
-  sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15);
+  if (!boardSounds()) { sfx.slash(); sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15); }
   behead(victim, dir);
   await arrived;
   if (attacker.userData.motion !== id) return;
@@ -1523,6 +1639,43 @@ applySpeed();
 // mode: 'ai' (vs computer) or 'online' (vs a friend through the shared database).
 const game = { pos: new E.Position(START_FEN), legal: [], history: [], keys: [], human: E.WHITE, level: 'medium', mode: 'ai', over: null, started: false, busy: false, id: 0 };
 let selected = -1, pendingPromo = null;
+// viewPly: null on the live game, or how many moves in while stepping back through it.
+// premove: { from, to } queued while the computer thinks; it plays the moment it's your turn, if legal.
+let viewPly = null, premove = null;
+
+// Clock presets: [minutes in seconds, increment in seconds]. Clocks run against the computer only.
+const CLOCKS = { none: null, '1': [60, 0], '3+2': [180, 2], '5': [300, 0], '10': [600, 0], '15+10': [900, 10] };
+
+function positionAt(n) {
+  const p = new E.Position(START_FEN);
+  for (const h of game.history.slice(0, n)) {
+    const m = p.legal().find((x) => E.uci(x) === h.uci);
+    if (!m) break;
+    p.make(m);
+  }
+  return p;
+}
+
+// Step through the game: k moves in, or null (or past the end) for the live position.
+function showPly(k) {
+  if (k !== null && (k < 0 || k >= game.history.length)) k = k < 0 ? 0 : null;
+  if (k === viewPly) return;
+  viewPly = k;
+  setSelected(-1);
+  clearPieces();
+  syncPieces();
+  drawMarks();
+  updateHud();
+}
+
+// Moves you can make right now, or queue as a premove while the computer thinks.
+const canPremove = () => game.mode === 'ai' && game.started && !game.over && game.pos.turn !== game.human && viewPly === null;
+function preMoves() {
+  const f = game.pos.fen().split(' ');
+  f[1] = game.human === E.WHITE ? 'w' : 'b'; f[3] = '-';
+  try { return new E.Position(f.join(' ')).legal(); } catch { return []; }
+}
+function movesFor() { return canMove() ? game.legal : canPremove() ? preMoves() : []; }
 
 function resetBoard() {
   game.id++;
@@ -1530,7 +1683,7 @@ function resetBoard() {
   game.history = []; game.keys = [game.pos.key()];
   game.legal = game.pos.legal();
   game.over = null; game.busy = false;
-  selected = -1;
+  selected = -1; viewPly = null; premove = null; game.clock = null;
   clearPieces();
   clearStains();
   syncPieces();
@@ -1543,9 +1696,12 @@ function newGame(side, level) {
   game.human = side === 'b' ? E.BLACK : E.WHITE; // before the pieces are made: bent ones lean toward this side
   resetBoard();
   game.level = level; game.started = true;
+  const c = CLOCKS[settings.clock];
+  game.clock = c ? { left: { [E.WHITE]: c[0] * 1000, [E.BLACK]: c[0] * 1000 }, inc: c[1] * 1000, at: performance.now() } : null;
   updateHud();
   aimCamera(true);
   controls.autoRotate = false;
+  sfx.cue('start');
   maybeComputerMove();
 }
 
@@ -1559,8 +1715,21 @@ function gameOverCheck() {
   return null;
 }
 
+// Board sounds click for every move; a check or promotion adds its chime with either sound set.
+function moveSound(m, captured) {
+  if (boardSounds()) sfx.cue(captured ? 'capture' : E.flag(m) === E.F_CASTLE ? 'castle' : 'move');
+  if (E.promo(m)) sfx.cue('promote');
+  else if (game.pos.inCheck()) sfx.cue('check');
+}
+
 async function playMove(m, animate = true) {
+  if (viewPly !== null) { viewPly = null; clearPieces(); syncPieces(); }
   const p = game.pos, color = p.turn;
+  if (game.clock && game.mode === 'ai') {
+    const now = performance.now();
+    game.clock.left[color] += game.clock.inc - (now - game.clock.at);
+    game.clock.at = now;
+  }
   const san = p.san(m, game.legal);
   const captured = E.flag(m) === E.F_EP ? (E.PAWN | (color ^ E.BLACK)) : p.b[E.to(m)];
   const moveNo = p.full;
@@ -1570,7 +1739,7 @@ async function playMove(m, animate = true) {
   game.legal = p.legal();
   setSelected(-1);
   // The move counts now; the animation plays alongside whatever happens next.
-  if (animate) animateMove(m, captured); else syncPieces();
+  if (animate) { anim2d = { from: E.from(m), to: E.to(m) }; animateMove(m, captured); moveSound(m, captured); } else syncPieces();
   game.over = gameOverCheck();
   drawMarks();
   updateHud();
@@ -1617,6 +1786,11 @@ async function maybeComputerMove() {
   const m = game.legal.find((x) => E.uci(x) === uci) || game.legal[0];
   game.busy = false;
   await playMove(m);
+  if (premove) {
+    const pm = premove, mv = game.legal.find((x) => E.from(x) === pm.from && E.to(x) === pm.to && (!E.promo(x) || E.promo(x) === E.QUEEN));
+    premove = null;
+    if (mv && !game.over) humanMove(mv); else drawMarks();
+  }
 }
 
 function humanMove(m) {
@@ -1634,15 +1808,18 @@ function setSelected(sq) {
 }
 
 function onSquare(sq) {
-  if (!game.started || game.over || game.busy || game.pos.turn !== game.human) return;
-  if (game.mode === 'online' && !(online.game && online.game.status === 'playing' && online.game.mine !== null)) return;
+  if (viewPly !== null) { showPly(null); return; } // a tap while looking back returns to the game
+  const list = movesFor(), pre = !canMove();
+  if (!list.length) return;
   const piece = game.pos.b[sq];
   if (selected >= 0) {
-    const options = game.legal.filter((m) => E.from(m) === selected && E.to(m) === sq);
+    const options = list.filter((m) => E.from(m) === selected && E.to(m) === sq);
+    if (options.length && pre) { premove = { from: selected, to: sq }; setSelected(-1); drawMarks(); return; }
     if (options.length > 1) { openPromotion(options); return; }
     if (options.length === 1) { humanMove(options[0]); return; }
   }
-  setSelected(piece && (piece & E.BLACK) === game.human && game.legal.some((m) => E.from(m) === sq) ? sq : -1);
+  if (pre) premove = null; // any other tap cancels a queued premove
+  setSelected(piece && (piece & E.BLACK) === game.human && list.some((m) => E.from(m) === sq) ? sq : -1);
   drawMarks();
 }
 
@@ -1798,7 +1975,7 @@ async function enterOnline(code) {
   show('endDlg', false);
   const ref = online.db.doc('games/' + code);
   const g = online.game = { code, ref, loaded: false, status: 'waiting', mine: null, white: null, black: null, sending: false };
-  game.mode = 'online'; game.started = true;
+  game.mode = 'online'; game.started = true; game.clock = null;
   controls.autoRotate = false;
   g.unsub = ref.onSnapshot((snap) => onGameSnap(g, snap), (e) => {
     if (online.game !== g) return;
@@ -1912,7 +2089,72 @@ function updateHud() {
 
   const last = game.history[game.history.length - 1];
   $('lastMove').innerHTML = last ? `${last.moveNo}${last.color === E.WHITE ? '.' : '…'} ${last.san}` : '<span class="empty">None</span>';
+  renderMoves();
+  drawClocks();
 }
+
+// The move list: one row per move number; the move on the board now is highlighted, and any move can
+// be clicked to see the position after it.
+function renderMoves() {
+  $('moveBox').hidden = !game.started;
+  const list = $('moveList'), at = viewPly ?? game.history.length;
+  list.innerHTML = '';
+  if (!game.history.length) { list.innerHTML = '<li class="empty">No moves yet</li>'; }
+  let row = null;
+  game.history.forEach((h, i) => {
+    if (h.color === E.WHITE || !row) {
+      row = document.createElement('li');
+      row.innerHTML = `<i>${h.moveNo}.</i>`;
+      if (h.color === E.BLACK) row.append(document.createElement('span'));
+      list.append(row);
+    }
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = h.san;
+    if (i + 1 === at) b.className = 'now';
+    b.onclick = () => showPly(i + 1 === game.history.length ? null : i + 1);
+    row.append(b);
+  });
+  list.querySelector('.now')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  $('navFirst').disabled = $('navPrev').disabled = at === 0;
+  $('navNext').disabled = $('navLast').disabled = viewPly === null;
+}
+
+const fmtClock = (ms) => {
+  ms = Math.max(0, ms);
+  const sec = Math.floor(ms / 1000), m = Math.floor(sec / 60), s = sec % 60;
+  return ms < 10000 ? `0:${String(s).padStart(2, '0')}.${Math.floor(ms % 1000 / 100)}` : `${m}:${String(s).padStart(2, '0')}`;
+};
+// The side to move's clock runs; at zero that side loses on time.
+function drawClocks(now = performance.now()) {
+  const c = game.clock, on = !!(c && game.mode === 'ai' && game.started);
+  $('clockTop').hidden = $('clockBottom').hidden = !on;
+  if (!on) return;
+  const running = !game.over ? game.pos.turn : -1;
+  for (const [id, side] of [['clockTop', game.human ^ E.BLACK], ['clockBottom', game.human]]) {
+    const left = c.left[side] - (side === running ? now - c.at : 0), el = $(id);
+    el.textContent = fmtClock(left);
+    el.classList.toggle('running', side === running);
+    el.classList.toggle('low', left < 20000);
+    if (side === running && left <= 0 && !game.over) {
+      c.left[side] = 0;
+      game.over = { kind: 'time', winner: side ^ E.BLACK, loser: side };
+      game.id++; game.busy = false; premove = null; setSelected(-1);
+      drawMarks(); updateHud();
+      showEnd();
+    }
+  }
+}
+$('navFirst').onclick = () => showPly(0);
+$('navPrev').onclick = () => showPly((viewPly ?? game.history.length) - 1);
+$('navNext').onclick = () => showPly(viewPly === null ? null : viewPly + 1);
+$('navLast').onclick = () => showPly(null);
+addEventListener('keydown', (e) => {
+  if (!game.started || e.target.closest?.('input, textarea') || !$('setupDlg').hidden) return;
+  if (e.key === 'ArrowLeft') { e.preventDefault(); $('navPrev').click(); }
+  else if (e.key === 'ArrowRight') { e.preventDefault(); $('navNext').click(); }
+  else if (e.key === 'ArrowUp' || e.key === 'Home') { e.preventDefault(); showPly(0); }
+  else if (e.key === 'ArrowDown' || e.key === 'End') { e.preventDefault(); showPly(null); }
+});
 
 function show(id, on) { $(id).hidden = !on; }
 
@@ -1925,6 +2167,9 @@ function openSetup(cancellable) {
   $(STYLE_INPUTS[settings.style] || 'stFighters').checked = true;
   $('bendBox').checked = !!settings.bend;
   $('outlineBox').checked = settings.outline !== false;
+  $(settings.sounds === 'board' ? 'snBoard' : 'snBattle').checked = true;
+  const clockInput = document.querySelector(`input[name="clock"][value="${settings.clock || 'none'}"]`);
+  if (clockInput) clockInput.checked = true;
   $('speedDial').value = settings.speed || 1;
   showSpeed();
   $('setupCancel').hidden = !cancellable;
@@ -1936,6 +2181,7 @@ function openSetup(cancellable) {
 function refreshSetup() {
   const onlineMode = $('mdOnline').checked, open = !$('setupDlg').hidden;
   $('levelSet').hidden = onlineMode;
+  $('clockSet').hidden = onlineMode;
   $('onlineSet').hidden = !onlineMode;
   $('setupLead').textContent = onlineMode
     ? 'Play a friend, each on your own device. Join a game below or create one and share its code.'
@@ -1966,6 +2212,11 @@ $('bendBox').addEventListener('change', () => {
   saveSettings();
   if (staticSets[style]) { clearPieces(); syncPieces(); drawMarks(); }
 });
+for (const id of ['snBattle', 'snBoard']) $(id).addEventListener('change', () => {
+  settings.sounds = $('snBoard').checked ? 'board' : 'battle';
+  saveSettings();
+  sfx.cue(settings.sounds === 'board' ? 'move' : 'slash');
+});
 $('outlineBox').addEventListener('change', () => {
   settings.outline = $('outlineBox').checked;
   saveSettings();
@@ -1979,7 +2230,7 @@ $('speedDial').addEventListener('input', () => {
 $('setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(e.target);
-  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, outline: $('outlineBox').checked, speed: +$('speedDial').value, lock: settings.lock };
+  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, outline: $('outlineBox').checked, view: settings.view, sounds: data.get('sounds'), clock: data.get('clock'), speed: +$('speedDial').value, lock: settings.lock };
   await setStyle(settings.style);
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   const side = settings.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : settings.side;
@@ -2049,6 +2300,11 @@ function showEnd() {
       title = youWon ? 'You win' : `${vs} wins`;
       text = o.kind === 'mate' ? (youWon ? `You checkmated ${vs}.` : `${vs} checkmated your king.`) : (youWon ? `${vs} resigned.` : 'You resigned.');
     }
+  } else if (o.kind === 'time') {
+    const youWon = o.winner === game.human;
+    eyebrow = `Time · ${moves} moves`;
+    title = youWon ? 'You win on time' : 'Out of time';
+    text = youWon ? `The ${game.level} computer ran out of time.` : 'Your clock ran out.';
   } else if (o.kind === 'mate') {
     const youWon = o.winner === game.human;
     eyebrow = `Checkmate · ${moves} moves`;
@@ -2066,6 +2322,7 @@ function showEnd() {
   }
   $('endEyebrow').textContent = eyebrow; $('endTitle').textContent = title; $('endText').textContent = text;
   setEndActions();
+  sfx.cue('end');
   show('endDlg', true);
   $('endAgain').focus();
 }
@@ -2139,7 +2396,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 // letting go on a legal square plays the move, anywhere else slides it home. A quick flick plays the
 // legal move that best matches the flick's direction. A press that doesn't move is a tap (handled above),
 // and dragging empty board still turns the camera.
-const canMove = () => game.started && !game.over && !game.busy && game.pos.turn === game.human &&
+const canMove = () => game.started && !game.over && !game.busy && game.pos.turn === game.human && viewPly === null &&
   (game.mode !== 'online' || !!(online.game && online.game.status === 'playing' && online.game.mine !== null));
 const hoverMark = flat(squareGeo, 0xffffff, 0.35);
 hoverMark.visible = false;
@@ -2161,11 +2418,11 @@ function slideHome(piece, sq) {
   tween(140, (e) => { if (piece.userData.motion !== id) return false; piece.position.lerpVectors(a, b, e); }, easeOut);
 }
 // The legal destination closest in direction to a flick (within about 25°), preferring a matching length.
-function flickTarget(sq, p) {
+function flickTarget(sq, p, list) {
   const from = sqPos(sq), dir = new THREE.Vector2(p.x - from.x, p.z - from.z);
   if (dir.length() < 0.25) return -1;
   let best = -1, bestScore = Infinity;
-  for (const m of game.legal) {
+  for (const m of list) {
     if (E.from(m) !== sq) continue;
     const t = sqPos(E.to(m)), v = new THREE.Vector2(t.x - from.x, t.z - from.z);
     const angle = Math.abs(Math.atan2(dir.x * v.y - dir.y * v.x, dir.dot(v)));
@@ -2178,11 +2435,12 @@ function flickTarget(sq, p) {
 
 // Capture phase, so the camera controls hear about the press only when it isn't on one of your pieces.
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  if (!e.isPrimary || !canMove()) return;
+  const list = e.isPrimary && viewPly === null ? movesFor() : [];
+  if (!list.length) return;
   pointerRay(e);
   // The first piece along the ray that can move: a back-rank piece's pick area can cover the pawn behind it.
   const piece = ray.intersectObjects(pickers, false).map((h) => h.object.userData.piece)
-    .find((pc) => game.legal.some((m) => E.from(m) === pc.userData.sq));
+    .find((pc) => (pc.userData.code & E.BLACK) === game.human && list.some((m) => E.from(m) === pc.userData.sq));
   if (!piece) return;
   const sq = piece.userData.sq;
   controls.enabled = false;
@@ -2212,17 +2470,148 @@ function endDrag(e, cancel) {
   hoverMark.visible = false;
   showLock(); // gives the camera back, unless the board is locked
   if (!d.moving) return;
-  const p = cancel ? null : pointerRay(e);
-  const legal = (to) => game.legal.filter((m) => E.from(m) === d.sq && E.to(m) === to);
+  const p = cancel ? null : pointerRay(e), list = movesFor(), pre = !canMove();
+  const legal = (to) => list.filter((m) => E.from(m) === d.sq && E.to(m) === to);
   let to = p ? squareAt(p) : -1;
-  if (p && !legal(to).length && performance.now() - d.t < 260) to = flickTarget(d.sq, p);
-  const options = to >= 0 && canMove() ? legal(to) : [];
-  if (options.length !== 1) slideHome(d.piece, d.sq);
-  if (options.length > 1) openPromotion(options);
+  if (p && !legal(to).length && performance.now() - d.t < 260) to = flickTarget(d.sq, p, list);
+  const options = to >= 0 ? legal(to) : [];
+  if (options.length !== 1 || pre) slideHome(d.piece, d.sq);
+  if (options.length && pre) { premove = { from: d.sq, to }; setSelected(-1); drawMarks(); }
+  else if (options.length > 1) openPromotion(options);
   else if (options.length === 1) humanMove(options[0]);
 }
 addEventListener('pointerup', (e) => endDrag(e, false));
 addEventListener('pointercancel', (e) => endDrag(e, true));
+
+// ------------------------------------------------------------------ flat 2D board
+
+// A top-down board drawn with DOM squares and the cburnett piece set (Colin M.L. Burnett, GPLv2+), with
+// the same rules, highlights, drag, flick and premoves as the 3D board. The 3D scene keeps its state
+// behind it but isn't drawn while 2D is on.
+const PIECES_2D = {
+  bB: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cg fill="%23000" stroke-linecap="butt"%3E%3Cpath d="M9 36c3.4-1 10.1.4 13.5-2 3.4 2.4 10.1 1 13.5 2 0 0 1.6.5 3 2-.7 1-1.6 1-3 .5-3.4-1-10.1.5-13.5-1-3.4 1.5-10.1 0-13.5 1-1.4.5-2.3.5-3-.5 1.4-2 3-2 3-2z"/%3E%3Cpath d="M15 32c2.5 2.5 12.5 2.5 15 0 .5-1.5 0-2 0-2 0-2.5-2.5-4-2.5-4 5.5-1.5 6-11.5-5-15.5-11 4-10.5 14-5 15.5 0 0-2.5 1.5-2.5 4 0 0-.5.5 0 2z"/%3E%3Cpath d="M25 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 1 1 5 0z"/%3E%3C/g%3E%3Cpath stroke="%23ececec" stroke-linejoin="miter" d="M17.5 26h10M15 30h15m-7.5-14.5v5M20 18h5"/%3E%3C/g%3E%3C/svg%3E',
+  bK: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath stroke-linejoin="miter" d="M22.5 11.6V6"/%3E%3Cpath fill="%23000" stroke-linecap="butt" stroke-linejoin="miter" d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"/%3E%3Cpath fill="%23000" d="M11.5 37a22.3 22.3 0 0 0 21 0v-7s9-4.5 6-10.5c-4-6.5-13.5-3.5-16 4V27v-3.5c-3.5-7.5-13-10.5-16-4-3 6 5 10 5 10z"/%3E%3Cpath stroke-linejoin="miter" d="M20 8h5"/%3E%3Cpath stroke="%23ececec" d="M32 29.5s8.5-4 6-9.7C34.1 14 25 18 22.5 24.6v2.1-2.1C20 18 9.9 14 7 19.9c-2.5 5.6 4.8 9 4.8 9"/%3E%3Cpath stroke="%23ececec" d="M11.5 30c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0"/%3E%3C/g%3E%3C/svg%3E',
+  bN: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath fill="%23000" d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21"/%3E%3Cpath fill="%23000" d="M24 18c.38 2.91-5.55 7.37-8 9-3 2-2.82 4.34-5 4-1.04-.94 1.41-3.04 0-3-1 0 .19 1.23-1 2-1 0-4 1-4-4 0-2 6-12 6-12s1.89-1.9 2-3.5c-.73-1-.5-2-.5-3 1-1 3 2.5 3 2.5h2s.78-2 2.5-3c1 0 1 3 1 3"/%3E%3Cpath fill="%23ececec" stroke="%23ececec" d="M9.5 25.5a.5.5 0 1 1-1 0 .5.5 0 1 1 1 0m5.43-9.75a.5 1.5 30 1 1-.86-.5.5 1.5 30 1 1 .86.5"/%3E%3Cpath fill="%23ececec" stroke="none" d="m24.55 10.4-.45 1.45.5.15c3.15 1 5.65 2.49 7.9 6.75S35.75 29.06 35.25 39l-.05.5h2.25l.05-.5c.5-10.06-.88-16.85-3.25-21.34s-5.79-6.64-9.19-7.16z"/%3E%3C/g%3E%3C/svg%3E',
+  bP: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cpath stroke="%23000" stroke-linecap="round" stroke-width="1.5" d="M22.5 9a4 4 0 0 0-3.22 6.38 6.48 6.48 0 0 0-.87 10.65c-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47a6.46 6.46 0 0 0-.87-10.65A4.01 4.01 0 0 0 22.5 9z"/%3E%3C/svg%3E',
+  bQ: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cg stroke="none"%3E%3Ccircle cx="6" cy="12" r="2.75"/%3E%3Ccircle cx="14" cy="9" r="2.75"/%3E%3Ccircle cx="22.5" cy="8" r="2.75"/%3E%3Ccircle cx="31" cy="9" r="2.75"/%3E%3Ccircle cx="39" cy="12" r="2.75"/%3E%3C/g%3E%3Cpath stroke-linecap="butt" d="M9 26c8.5-1.5 21-1.5 27 0l2.5-12.5L31 25l-.3-14.1-5.2 13.6-3-14.5-3 14.5-5.2-13.6L14 25 6.5 13.5z"/%3E%3Cpath stroke-linecap="butt" d="M9 26c0 2 1.5 2 2.5 4 1 1.5 1 1 .5 3.5-1.5 1-1.5 2.5-1.5 2.5-1.5 1.5.5 2.5.5 2.5 6.5 1 16.5 1 23 0 0 0 1.5-1 0-2.5 0 0 .5-1.5-1-2.5-.5-2.5-.5-2 .5-3.5 1-2 2.5-2 2.5-4-8.5-1.5-18.5-1.5-27 0z"/%3E%3Cpath fill="none" stroke-linecap="butt" d="M11 38.5a35 35 1 0 0 23 0"/%3E%3Cpath fill="none" stroke="%23ececec" d="M11 29a35 35 1 0 1 23 0m-21.5 2.5h20m-21 3a35 35 1 0 0 22 0m-23 3a35 35 1 0 0 24 0"/%3E%3C/g%3E%3C/svg%3E',
+  bR: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath stroke-linecap="butt" d="M9 39h27v-3H9zm3.5-7 1.5-2.5h17l1.5 2.5zm-.5 4v-4h21v4z"/%3E%3Cpath stroke-linecap="butt" stroke-linejoin="miter" d="M14 29.5v-13h17v13z"/%3E%3Cpath stroke-linecap="butt" d="M14 16.5 11 14h23l-3 2.5zM11 14V9h4v2h5V9h5v2h5V9h4v5z"/%3E%3Cpath fill="none" stroke="%23ececec" stroke-linejoin="miter" stroke-width="1" d="M12 35.5h21m-20-4h19m-18-2h17m-17-13h17M11 14h23"/%3E%3C/g%3E%3C/svg%3E',
+  wB: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cg fill="%23fff" stroke-linecap="butt"%3E%3Cpath d="M9 36c3.39-.97 10.11.43 13.5-2 3.39 2.43 10.11 1.03 13.5 2 0 0 1.65.54 3 2-.68.97-1.65.99-3 .5-3.39-.97-10.11.46-13.5-1-3.39 1.46-10.11.03-13.5 1-1.35.49-2.32.47-3-.5 1.35-1.94 3-2 3-2z"/%3E%3Cpath d="M15 32c2.5 2.5 12.5 2.5 15 0 .5-1.5 0-2 0-2 0-2.5-2.5-4-2.5-4 5.5-1.5 6-11.5-5-15.5-11 4-10.5 14-5 15.5 0 0-2.5 1.5-2.5 4 0 0-.5.5 0 2z"/%3E%3Cpath d="M25 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 1 1 5 0z"/%3E%3C/g%3E%3Cpath stroke-linejoin="miter" d="M17.5 26h10M15 30h15m-7.5-14.5v5M20 18h5"/%3E%3C/g%3E%3C/svg%3E',
+  wK: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath stroke-linejoin="miter" d="M22.5 11.63V6M20 8h5"/%3E%3Cpath fill="%23fff" stroke-linecap="butt" stroke-linejoin="miter" d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5"/%3E%3Cpath fill="%23fff" d="M11.5 37c5.5 3.5 15.5 3.5 21 0v-7s9-4.5 6-10.5c-4-6.5-13.5-3.5-16 4V27v-3.5c-3.5-7.5-13-10.5-16-4-3 6 5 10 5 10z"/%3E%3Cpath d="M11.5 30c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0m-21 3.5c5.5-3 15.5-3 21 0"/%3E%3C/g%3E%3C/svg%3E',
+  wN: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="none" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath fill="%23fff" d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21"/%3E%3Cpath fill="%23fff" d="M24 18c.38 2.91-5.55 7.37-8 9-3 2-2.82 4.34-5 4-1.042-.94 1.41-3.04 0-3-1 0 .19 1.23-1 2-1 0-4.003 1-4-4 0-2 6-12 6-12s1.89-1.9 2-3.5c-.73-.994-.5-2-.5-3 1-1 3 2.5 3 2.5h2s.78-1.992 2.5-3c1 0 1 3 1 3"/%3E%3Cpath fill="%23000" d="M9.5 25.5a.5.5 0 1 1-1 0 .5.5 0 1 1 1 0m5.433-9.75a.5 1.5 30 1 1-.866-.5.5 1.5 30 1 1 .866.5"/%3E%3C/g%3E%3C/svg%3E',
+  wP: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cpath fill="%23fff" stroke="%23000" stroke-linecap="round" stroke-width="1.5" d="M22.5 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38C17.33 16.5 16 18.59 16 21c0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z"/%3E%3C/svg%3E',
+  wQ: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="%23fff" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath d="M8 12a2 2 0 1 1-4 0 2 2 0 1 1 4 0m16.5-4.5a2 2 0 1 1-4 0 2 2 0 1 1 4 0M41 12a2 2 0 1 1-4 0 2 2 0 1 1 4 0M16 8.5a2 2 0 1 1-4 0 2 2 0 1 1 4 0M33 9a2 2 0 1 1-4 0 2 2 0 1 1 4 0"/%3E%3Cpath stroke-linecap="butt" d="M9 26c8.5-1.5 21-1.5 27 0l2-12-7 11V11l-5.5 13.5-3-15-3 15-5.5-14V25L7 14z"/%3E%3Cpath stroke-linecap="butt" d="M9 26c0 2 1.5 2 2.5 4 1 1.5 1 1 .5 3.5-1.5 1-1.5 2.5-1.5 2.5-1.5 1.5.5 2.5.5 2.5 6.5 1 16.5 1 23 0 0 0 1.5-1 0-2.5 0 0 .5-1.5-1-2.5-.5-2.5-.5-2 .5-3.5 1-2 2.5-2 2.5-4-8.5-1.5-18.5-1.5-27 0z"/%3E%3Cpath fill="none" d="M11.5 30c3.5-1 18.5-1 22 0M12 33.5c6-1 15-1 21 0"/%3E%3C/g%3E%3C/svg%3E',
+  wR: 'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" style="color-scheme:light only" width="45" height="45" viewBox="0 0 45 45"%3E%3Cg fill="%23fff" fill-rule="evenodd" stroke="%23000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"%3E%3Cpath stroke-linecap="butt" d="M9 39h27v-3H9zm3-3v-4h21v4zm-1-22V9h4v2h5V9h5v2h5V9h4v5"/%3E%3Cpath d="m34 14-3 3H14l-3-3"/%3E%3Cpath stroke-linecap="butt" stroke-linejoin="miter" d="M31 17v12.5H14V17"/%3E%3Cpath d="m31 29.5 1.5 2.5h-20l1.5-2.5"/%3E%3Cpath fill="none" stroke-linejoin="miter" d="M11 14h23"/%3E%3C/g%3E%3C/svg%3E'
+};
+const LETTER = [' ', 'P', 'N', 'B', 'R', 'Q', 'K'];
+const board2d = $('board2d');
+let anim2d = null, drag2d = null;
+
+function square2d(sq) { return board2d.querySelector(`[data-sq="${sq}"]`); }
+function render2d() {
+  if (!is2d()) return;
+  const flip = game.human === E.BLACK, b = viewPly === null ? game.pos.b : positionAt(viewPly).b;
+  const last = game.history[(viewPly ?? game.history.length) - 1];
+  const lastSq = last ? [E.sqParse(last.uci.slice(0, 2)), E.sqParse(last.uci.slice(2, 4))] : [];
+  const live = viewPly === null, list = live && selected >= 0 ? movesFor().filter((m) => E.from(m) === selected) : [];
+  const targets = new Set(list.map((m) => E.to(m)));
+  const checkSq = live && game.pos.inCheck() && !game.over ? game.pos.kings[game.pos.turn] : -1;
+  board2d.textContent = '';
+  for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+    const r = flip ? row : 7 - row, f = flip ? 7 - col : col, sq = r * 8 + f, el = document.createElement('div');
+    el.className = 'sq ' + ((r + f) % 2 ? 'light' : 'dark');
+    el.dataset.sq = sq;
+    if (lastSq.includes(sq)) el.classList.add('last');
+    if (live && sq === selected) el.classList.add('sel');
+    if (live && premove && (sq === premove.from || sq === premove.to)) el.classList.add('pre');
+    if (sq === checkSq) el.classList.add('check');
+    if (col === 0) el.insertAdjacentHTML('beforeend', `<span class="coord rank">${r + 1}</span>`);
+    if (row === 7) el.insertAdjacentHTML('beforeend', `<span class="coord file">${'abcdefgh'[f]}</span>`);
+    const code = b[sq];
+    if (code) {
+      const img = document.createElement('img');
+      img.src = PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
+      img.alt = '';
+      if (drag2d?.moving && drag2d.sq === sq) img.className = 'lift';
+      el.append(img);
+    }
+    if (targets.has(sq)) el.insertAdjacentHTML('beforeend', code ? '<span class="ring"></span>' : '<span class="dot"></span>');
+    board2d.append(el);
+  }
+  // The piece that just moved slides from where it was.
+  if (anim2d && live && !reduceMotion) {
+    const img = square2d(anim2d.to)?.querySelector('img'), a = square2d(anim2d.from)?.getBoundingClientRect(), z = square2d(anim2d.to)?.getBoundingClientRect();
+    if (img && a && z) img.animate([{ transform: `translate(${a.left - z.left}px, ${a.top - z.top}px)` }, { transform: 'none' }], { duration: 130 * SLOW, easing: 'ease-out' });
+  }
+  anim2d = null;
+}
+
+function sq2dAt(x, y) {
+  const r = board2d.getBoundingClientRect();
+  if (x < r.left || y < r.top || x >= r.right || y >= r.bottom) return -1;
+  const col = Math.floor((x - r.left) / r.width * 8), row = Math.floor((y - r.top) / r.height * 8);
+  const flip = game.human === E.BLACK, rank = flip ? row : 7 - row, file = flip ? 7 - col : col;
+  return rank * 8 + file;
+}
+
+board2d.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary) return;
+  const sq = sq2dAt(e.clientX, e.clientY);
+  if (sq < 0) return;
+  const list = viewPly === null ? movesFor() : [], code = game.pos.b[sq];
+  const mine = !!code && (code & E.BLACK) === game.human && list.some((m) => E.from(m) === sq);
+  drag2d = { sq, x: e.clientX, y: e.clientY, t: performance.now(), moving: false, mine, id: e.pointerId };
+  if (mine) {
+    const ghost = document.createElement('img'), size = board2d.getBoundingClientRect().width / 8;
+    ghost.className = 'drag2d'; ghost.alt = '';
+    ghost.src = PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
+    Object.assign(ghost.style, { width: size * 1.1 + 'px', height: size * 1.1 + 'px', display: 'none' });
+    document.body.append(ghost);
+    drag2d.ghost = ghost;
+  }
+});
+addEventListener('pointermove', (e) => {
+  const d = drag2d;
+  if (!d || e.pointerId !== d.id || !d.mine) return;
+  if (!d.moving && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+  if (!d.moving) { d.moving = true; if (selected !== d.sq) setSelected(d.sq); drawMarks(); }
+  Object.assign(d.ghost.style, { display: 'block', left: e.clientX + 'px', top: e.clientY + 'px' });
+  board2d.querySelector('.over')?.classList.remove('over');
+  square2d(sq2dAt(e.clientX, e.clientY))?.classList.add('over');
+});
+function end2d(e, cancel) {
+  const d = drag2d;
+  if (!d || e.pointerId !== d.id) return;
+  drag2d = null;
+  d.ghost?.remove();
+  if (!d.moving) { if (!cancel) onSquare(d.sq); return; } // a tap
+  const list = movesFor(), pre = !canMove(), legal = (to) => list.filter((m) => E.from(m) === d.sq && E.to(m) === to);
+  let to = cancel ? -1 : sq2dAt(e.clientX, e.clientY);
+  // A quick flick picks the legal move closest to its direction, measured in squares on the 3D board's axes.
+  if (!cancel && !legal(to).length && performance.now() - d.t < 260) {
+    const unit = board2d.getBoundingClientRect().width / 8, flip = game.human === E.BLACK ? -1 : 1, from = sqPos(d.sq);
+    to = flickTarget(d.sq, new THREE.Vector3(from.x + (e.clientX - d.x) / unit * flip, 0, from.z + (e.clientY - d.y) / unit * flip), list);
+  }
+  const options = to >= 0 ? legal(to) : [];
+  if (options.length && pre) { premove = { from: d.sq, to }; setSelected(-1); }
+  else if (options.length > 1) openPromotion(options);
+  else if (options.length === 1) { humanMove(options[0]); return; }
+  drawMarks();
+}
+addEventListener('pointerup', (e) => end2d(e, false));
+addEventListener('pointercancel', (e) => end2d(e, true));
+
+function showView() {
+  const flat2d = is2d();
+  board2d.hidden = !flat2d;
+  $('stage').style.visibility = flat2d ? 'hidden' : '';
+  $('credit').hidden = !flat2d;
+  $('viewModeBtn').textContent = flat2d ? '3D' : '2D';
+  $('viewModeBtn').title = flat2d ? 'Back to the 3D board' : 'Flat 2D board';
+  $('viewModeBtn').setAttribute('aria-label', flat2d ? 'Switch to the 3D board' : 'Switch to the flat 2D board');
+  $('lockBtn').hidden = $('viewBtn').hidden = flat2d;
+  render2d();
+}
+$('viewModeBtn').onclick = () => { settings.view = is2d() ? '3d' : '2d'; saveSettings(); showView(); };
 
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
@@ -2239,8 +2628,10 @@ renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - lastFrame) / 1000) / SLOW;
   lastFrame = now;
   runTweens(now);
+  if (game.clock && game.started && !game.over) drawClocks(now);
   for (const piece of live) piece.userData.mixer.update(dt);
   for (let i = effects.length - 1; i >= 0; i--) if (!effects[i].update(dt)) effects.splice(i, 1);
+  if (is2d()) return;
   controls.update();
   renderer.render(scene, camera);
 });
@@ -2270,6 +2661,7 @@ async function start(data) {
   game.legal = game.pos.legal();
   if (data && data.settings) { settings = data.settings; applySpeed(); }
   showLock();
+  showView();
   if (STYLE_TITLES[settings.style]) {
     $('loadText').textContent = `Setting out the ${STYLE_TITLES[settings.style]} set.`;
     try { await loadStyle(settings.style); style = settings.style; } catch {}
