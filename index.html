@@ -152,6 +152,8 @@
   }
   .modes .choice b { font: italic 700 19px/1.1 var(--font-display); }
   .modes .choice em { font-style: normal; color: var(--muted); font-size: 12px; }
+  .toggle { display: block; }
+  .toggle + .toggle { margin-top: 8px; }
   .toggle span {
     display: flex; flex-direction: column; gap: 2px; padding: 11px 14px; border-radius: 12px;
     border: 1px solid var(--line); cursor: pointer;
@@ -213,6 +215,9 @@
     <button class="icon-btn" id="soundBtn" type="button" title="Sound" aria-label="Sound on" aria-pressed="true">
       <svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path id="soundWaves" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path id="soundOff" d="M17 9l5 6M22 9l-5 6" hidden/></svg>
     </button>
+    <button class="icon-btn" id="lockBtn" type="button" title="Lock the board" aria-label="Board unlocked" aria-pressed="false">
+      <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path id="lockShackle" d="M8 11V8a4 4 0 0 1 7.6-1.7"/></svg>
+    </button>
     <button class="icon-btn" id="viewBtn" type="button" title="Reset view" aria-label="Reset camera view">
       <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
     </button>
@@ -272,6 +277,7 @@
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
+      <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
       <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
     </fieldset>
     <fieldset>
@@ -548,6 +554,38 @@ scene.add(stains);
 
 const pickMat = new THREE.MeshBasicMaterial({ visible: false });
 
+// Dark outlines so pieces stand out from the board: each mesh gets an inverted-hull twin (back faces only,
+// pushed out along the normals in view space by a fixed width). Skinned twins share the skeleton, so the
+// outline follows the animation.
+const OUTLINE_WIDTH = 0.014;
+const outlineMat = (() => {
+  const m = new THREE.MeshBasicMaterial({ color: 0x050505, side: THREE.BackSide });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      #ifdef USE_SKINNING
+        vec3 outlineN = objectNormal;
+      #else
+        vec3 outlineN = normal;
+      #endif
+      mvPosition.xyz += normalize( normalMatrix * outlineN ) * ${OUTLINE_WIDTH};
+      gl_Position = projectionMatrix * mvPosition;`);
+  };
+  return m;
+})();
+
+function addOutlines(root) {
+  const meshes = [];
+  root.traverse((o) => { if (o.isMesh && !o.userData.outline) meshes.push(o); });
+  for (const m of meshes) {
+    const o = m.isSkinnedMesh ? new THREE.SkinnedMesh(m.geometry, outlineMat) : new THREE.Mesh(m.geometry, outlineMat);
+    if (m.isSkinnedMesh) o.bind(m.skeleton, m.bindMatrix);
+    o.userData.outline = true;
+    o.frustumCulled = false;
+    o.position.copy(m.position); o.quaternion.copy(m.quaternion); o.scale.copy(m.scale);
+    m.parent.add(o);
+  }
+}
+
 // Downloads with progress; a dropped connection is retried twice before giving up.
 async function fetchBytes(path, onBytes, tries = 3) {
   let counted = 0;
@@ -577,7 +615,7 @@ function fromBase64(buf) {
 
 function skinnedMeshes(root) {
   const out = [];
-  root.traverse((o) => { if (o.isSkinnedMesh) out.push(o); });
+  root.traverse((o) => { if (o.isSkinnedMesh && !o.userData.outline) out.push(o); });
   return out;
 }
 
@@ -888,7 +926,9 @@ function makeStaticPiece(code, sq) {
   const char = new THREE.Group(), tilt = new THREE.Group();
   // Busts on both sides face the player's camera (+z when playing White), so you see every face.
   const yaw = t.bust && game.human === E.BLACK ? Math.PI : 0;
-  tilt.add(staticNode(t, yaw).clone(true));
+  const model = staticNode(t, yaw).clone(true);
+  if (settings.outline !== false) addOutlines(model);
+  tilt.add(model);
   char.add(tilt);
   char.rotation.y = yaw;
   piece.add(char);
@@ -914,6 +954,7 @@ function makePiece(code, sq) {
   model.traverse((o) => {
     if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map((m) => sideMaterial(m, color)) : sideMaterial(o.material, color);
   });
+  if (settings.outline !== false) addOutlines(model);
   model.scale.setScalar(t.scale);
   model.position.set(-t.midX * t.scale, -t.footY * t.scale, -t.midZ * t.scale + t.halfLen);
   const tilt = new THREE.Group();
@@ -1337,7 +1378,8 @@ function cutStaticHead(victim) {
   const parts = [];
   let n = 0;
   victim.userData.tilt.traverse((m) => {
-    if (!m.isMesh) return;
+    if (m.userData.outline) m.visible = false; // the body's outline would still show the head
+    if (!m.isMesh || m.userData.outline) return;
     const g = m.geometry, pos = g.attributes.position, uv = g.attributes.uv;
     const idx = g.index ? (i) => g.index.getX(i) : (i) => i, count = g.index ? g.index.count : pos.count;
     const mats = Array.isArray(m.material) ? m.material : [m.material];
@@ -1882,6 +1924,7 @@ function openSetup(cancellable) {
   $(settings.mode === 'online' ? 'mdOnline' : 'mdAi').checked = true;
   $(STYLE_INPUTS[settings.style] || 'stFighters').checked = true;
   $('bendBox').checked = !!settings.bend;
+  $('outlineBox').checked = settings.outline !== false;
   $('speedDial').value = settings.speed || 1;
   showSpeed();
   $('setupCancel').hidden = !cancellable;
@@ -1923,6 +1966,11 @@ $('bendBox').addEventListener('change', () => {
   saveSettings();
   if (staticSets[style]) { clearPieces(); syncPieces(); drawMarks(); }
 });
+$('outlineBox').addEventListener('change', () => {
+  settings.outline = $('outlineBox').checked;
+  saveSettings();
+  clearPieces(); syncPieces(); drawMarks();
+});
 $('speedDial').addEventListener('input', () => {
   settings.speed = +$('speedDial').value;
   showSpeed(); applySpeed(); saveSettings();
@@ -1931,7 +1979,7 @@ $('speedDial').addEventListener('input', () => {
 $('setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(e.target);
-  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, speed: +$('speedDial').value };
+  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, outline: $('outlineBox').checked, speed: +$('speedDial').value, lock: settings.lock };
   await setStyle(settings.style);
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   const side = settings.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : settings.side;
@@ -1951,6 +1999,17 @@ $('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.p
 $('waitCancel').onclick = () => { leaveOnline(true); game.started = false; resetBoard(); updateHud(); openSetup(false); };
 $('newBtn').onclick = () => { if (!templatesReady) return; show('endDlg', false); openSetup(game.started && !game.over); };
 $('viewBtn').onclick = () => aimCamera(false);
+// Locked, the board can't be turned or zoomed by dragging; tapping pieces still works.
+function showLock() {
+  const on = !!settings.lock;
+  controls.enabled = !on;
+  if (on) controls.autoRotate = false;
+  $('lockBtn').setAttribute('aria-pressed', String(on));
+  $('lockBtn').setAttribute('aria-label', on ? 'Board locked' : 'Board unlocked');
+  $('lockBtn').title = on ? 'Unlock the board' : 'Lock the board';
+  $('lockShackle').setAttribute('d', on ? 'M8 11V8a4 4 0 0 1 8 0v3' : 'M8 11V8a4 4 0 0 1 7.6-1.7');
+}
+$('lockBtn').onclick = () => { settings.lock = !settings.lock; saveSettings(); showLock(); };
 function showSound() {
   $('soundBtn').setAttribute('aria-pressed', String(sfx.on));
   $('soundBtn').setAttribute('aria-label', sfx.on ? 'Sound on' : 'Sound off');
@@ -2109,7 +2168,7 @@ const onlineReady = initOnline().catch(() => {});
 
 async function start(data) {
   aimCamera(true);
-  controls.autoRotate = !reduceMotion;
+  controls.autoRotate = !reduceMotion && !settings.lock;
   try {
     await loadCharacters();
   } catch (err) {
@@ -2121,6 +2180,7 @@ async function start(data) {
   templatesReady = true;
   game.legal = game.pos.legal();
   if (data && data.settings) { settings = data.settings; applySpeed(); }
+  showLock();
   if (STYLE_TITLES[settings.style]) {
     $('loadText').textContent = `Setting out the ${STYLE_TITLES[settings.style]} set.`;
     try { await loadStyle(settings.style); style = settings.style; } catch {}
