@@ -260,6 +260,8 @@
       <div class="modes">
         <label class="choice"><input type="radio" name="style" id="stFighters" value="fighters" checked><span><b>Fighters</b><em>Rigged warriors</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stClassic" value="classic"><span><b>Classic</b><em>Your original chess set</em></span></label>
+        <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
+        <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
     </fieldset>
     <fieldset>
@@ -647,8 +649,11 @@ const SIDE_TONES = {
   [E.BLACK]: { tint: new THREE.Color(0xffffff), lo: 0.012, hi: 0.08, plain: 0.03 }
 };
 const sideMaterials = new Map();
-function sideMaterial(src, color) {
-  const key = src.uuid + ':' + color;
+// With keepGold (an HSV saturation threshold), bright golden texels — the bust sets' crowns and
+// Tutankhamun's mask — skip the recolor and turn to polished metal, so both sides keep their gold.
+// The threshold is per piece: the Egyptian sand is itself fairly yellow, the medieval marble is not.
+function sideMaterial(src, color, keepGold = 0) {
+  const key = src.uuid + ':' + color + ':' + keepGold;
   if (sideMaterials.has(key)) return sideMaterials.get(key);
   const tone = SIDE_TONES[color], m = src.clone();
   if (m.color) m.color.copy(tone.tint).multiplyScalar(tone.plain);
@@ -658,12 +663,22 @@ function sideMaterial(src, color) {
     m.onBeforeCompile = (shader) => {
       shader.uniforms.sideTint = { value: tone.tint };
       shader.uniforms.sideRange = { value: new THREE.Vector2(tone.lo, tone.hi) };
-      shader.fragmentShader = 'uniform vec3 sideTint;\nuniform vec2 sideRange;\n' + shader.fragmentShader.replace('#include <map_fragment>', `
+      let frag = 'uniform vec3 sideTint;\nuniform vec2 sideRange;\n' + shader.fragmentShader.replace('#include <map_fragment>', `
         vec4 sampledDiffuseColor = texture2D( map, vMapUv );
         float lum = dot( sampledDiffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) );
-        diffuseColor.rgb *= sideTint * mix( sideRange.x, sideRange.y, lum );`);
+        vec3 sideColor = sideTint * mix( sideRange.x, sideRange.y, lum );
+        float gold = 0.0;
+        ${keepGold ? `
+        vec3 s = sampledDiffuseColor.rgb;
+        float hi = max( s.r, max( s.g, s.b ) ), sat = ( hi - min( s.r, min( s.g, s.b ) ) ) / max( hi, 1e-3 );
+        gold = smoothstep( ${keepGold.toFixed(2)}, ${(keepGold + 0.1).toFixed(2)}, sat ) * smoothstep( 0.3, 0.42, hi )
+          * step( s.b, s.g ) * step( s.g, s.r + 0.02 );` : ''}
+        diffuseColor.rgb *= mix( sideColor, sampledDiffuseColor.rgb * 1.15, gold );`);
+      if (keepGold) frag = frag.replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  metalnessFactor = mix( metalnessFactor, 1.0, gold );')
+        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix( roughnessFactor, 0.28, gold );');
+      shader.fragmentShader = frag;
     };
-    m.customProgramCacheKey = () => 'side' + color;
+    m.customProgramCacheKey = () => 'side' + color + 'g' + keepGold;
   }
   if (color === E.BLACK && 'roughness' in m) { m.roughness = Math.min(m.roughness, 0.45); m.metalness = Math.max(m.metalness, 0.2); }
   sideMaterials.set(key, m);
@@ -737,14 +752,58 @@ function loadClassic() {
   return classicLoad;
 }
 
+// ------------------------------------------------------------------ bust sets
+
+// Two sets of carved busts on pedestals, made with Magnific from the user's set pictures (one Tripo model
+// per piece, shared by both sides and recolored like the fighters). Static like the classic set.
+// In their files the busts face +x; a quarter turn makes them face +z like the fighters.
+const BUST_HEIGHTS = { [E.PAWN]: 0.95, [E.KNIGHT]: 1.1, [E.BISHOP]: 1.2, [E.ROOK]: 1.12, [E.QUEEN]: 1.3, [E.KING]: 1.42 };
+const BUST_NAMES = { [E.PAWN]: 'pawn', [E.KNIGHT]: 'knight', [E.BISHOP]: 'bishop', [E.ROOK]: 'rook', [E.QUEEN]: 'queen', [E.KING]: 'king' };
+const BUST_SETS = {
+  egypt: { title: 'Egyptian', gold: { [E.KING]: 0.5 } },
+  medieval: { title: 'Medieval', gold: { [E.KING]: 0.3, [E.QUEEN]: 0.3 } }
+};
+const STYLE_TITLES = { classic: 'classic', egypt: 'Egyptian', medieval: 'Medieval' };
+const staticSets = { classic: classicTypes, egypt: {}, medieval: {} };   // style -> code -> { node, height }
+const bustLoads = {};
+
+function loadBusts(name) {
+  bustLoads[name] ||= (async () => {
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder), set = BUST_SETS[name];
+    const kinds = Object.keys(BUST_NAMES).map(Number);
+    const bufs = await Promise.all(kinds.map((t) => fetchBytes(`characters/${name}-${BUST_NAMES[t]}.txt`, () => {}).then(fromBase64)));
+    for (let i = 0; i < kinds.length; i++) {
+      const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene;
+      const box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+      const scale = Math.min(BUST_HEIGHTS[type] / size.y, 0.86 / Math.max(size.x, size.z));
+      for (const color of [E.WHITE, E.BLACK]) {
+        const copy = src.clone(true);
+        copy.traverse((o) => {
+          if (!o.isMesh) return;
+          o.material = sideMaterial(o.material, color, set.gold[type] || 0);
+          o.castShadow = true; o.receiveShadow = true;
+        });
+        copy.position.set(-c.x, -box.min.y, -c.z);
+        const node = new THREE.Group(); node.add(copy);
+        node.scale.setScalar(scale); node.rotation.y = -Math.PI / 2;
+        staticSets[name][color | type] = { node, height: size.y * scale, yaw: color === E.WHITE ? Math.PI : 0, cut: 0.76 };
+      }
+    }
+  })();
+  bustLoads[name].catch(() => { delete bustLoads[name]; });
+  return bustLoads[name];
+}
+
+function loadStyle(name) { return name === 'classic' ? loadClassic() : loadBusts(name); }
+
 // Switches every piece on the board to the chosen style.
 async function setStyle(next) {
-  if (next === 'classic') {
+  if (next !== 'fighters') {
     $('startBtn').disabled = true;
     const was = $('statusText').textContent;
-    setStatus('Loading the classic set', 'thinking');
-    try { await loadClassic(); }
-    catch (e) { toast(`The classic set didn't load: ${e.message}. Using the fighters.`); next = 'fighters'; }
+    setStatus(`Loading the ${STYLE_TITLES[next]} set`, 'thinking');
+    try { await loadStyle(next); }
+    catch (e) { toast(`The ${STYLE_TITLES[next]} set didn't load: ${e.message}. Using the fighters.`); next = 'fighters'; }
     setStatus(was, 'idle');
     updateHud();
     refreshSetup();
@@ -756,12 +815,13 @@ async function setStyle(next) {
   drawMarks();
 }
 
-function makeClassicPiece(code, sq) {
-  const t = classicTypes[code], piece = new THREE.Group();
+function makeStaticPiece(code, sq) {
+  const t = staticSets[style][code], piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
   const char = new THREE.Group(), tilt = new THREE.Group();
   tilt.add(t.node.clone(true));
   char.add(tilt);
+  char.rotation.y = t.yaw || 0;
   piece.add(char);
   const height = t.height;
   const picker = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, height + 0.1, 12), pickMat);
@@ -769,13 +829,14 @@ function makeClassicPiece(code, sq) {
   picker.userData.piece = piece;
   piece.add(picker);
   pickers.push(picker);
-  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: 0, motion: 0 };
+  // Busts lose the head from the neck up, about three quarters of the way up the piece.
+  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut };
   pieceRoot.add(piece);
   return piece;
 }
 
 function makePiece(code, sq) {
-  if (style === 'classic' && classicTypes[code]) return makeClassicPiece(code, sq);
+  if (staticSets[style]?.[code]) return makeStaticPiece(code, sq);
   const t = types[code & 7], color = code & E.BLACK;
   const piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
@@ -1183,11 +1244,12 @@ function cutHead(victim) {
   return { head, neckAt };
 }
 
-// Unrigged pieces: triangles above "neck" height (two thirds up) become the head; the body keeps the rest.
+// Unrigged pieces: triangles above "neck" height (two thirds up, or the piece's own cut) become the head;
+// the body keeps the rest.
 function cutStaticHead(victim) {
   victim.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(victim.userData.tilt);
-  const cutY = box.min.y + (box.max.y - box.min.y) * 0.66;
+  const cutY = box.min.y + (box.max.y - box.min.y) * (victim.userData.cut || 0.66);
   const center = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const parts = [];
   let n = 0;
@@ -1733,7 +1795,7 @@ function openSetup(cancellable) {
   $(settings.level === 'easy' ? 'lvEasy' : settings.level === 'hard' ? 'lvHard' : 'lvMedium').checked = true;
   $(settings.side === 'b' ? 'sdBlack' : settings.side === 'r' ? 'sdRandom' : 'sdWhite').checked = true;
   $(settings.mode === 'online' ? 'mdOnline' : 'mdAi').checked = true;
-  $(settings.style === 'classic' ? 'stClassic' : 'stFighters').checked = true;
+  $(STYLE_INPUTS[settings.style] || 'stFighters').checked = true;
   $('setupCancel').hidden = !cancellable;
   $('onlineNote').textContent = '';
   show('setupDlg', true);
@@ -1758,8 +1820,8 @@ function refreshSetup() {
 }
 for (const id of ['mdAi', 'mdOnline']) $(id).addEventListener('change', refreshSetup);
 // Picking a style swaps the pieces on the board behind the card right away.
-for (const id of ['stFighters', 'stClassic']) $(id).addEventListener('change', () => {
-  const next = $('stClassic').checked ? 'classic' : 'fighters';
+const STYLE_INPUTS = { fighters: 'stFighters', classic: 'stClassic', egypt: 'stEgypt', medieval: 'stMedieval' };
+for (const [next, id] of Object.entries(STYLE_INPUTS)) $(id).addEventListener('change', () => {
   settings.style = next;
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   setStyle(next);
@@ -1958,9 +2020,9 @@ async function start(data) {
   templatesReady = true;
   game.legal = game.pos.legal();
   if (data && data.settings) settings = data.settings;
-  if (settings.style === 'classic') {
-    $('loadText').textContent = 'Setting out the classic set.';
-    try { await loadClassic(); style = 'classic'; } catch {}
+  if (STYLE_TITLES[settings.style]) {
+    $('loadText').textContent = `Setting out the ${STYLE_TITLES[settings.style]} set.`;
+    try { await loadStyle(settings.style); style = settings.style; } catch {}
   }
   syncPieces();
   show('loadDlg', false);
