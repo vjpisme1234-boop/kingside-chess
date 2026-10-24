@@ -189,6 +189,19 @@
   }
 
   .view-btn { font: 700 13px var(--font-body); letter-spacing: 0.02em; }
+  .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .swatches.wide { grid-template-columns: repeat(3, 1fr); }
+  .swatches button {
+    display: flex; flex-direction: column; gap: 6px; align-items: stretch; padding: 6px; border-radius: 12px;
+    border: 1px solid var(--line); background: transparent; font-size: 12px; color: var(--muted);
+  }
+  .swatches button[aria-pressed="true"] { border-color: var(--brass); background: rgba(210, 168, 90, 0.1); color: var(--ivory); }
+  .swatches .sw { aspect-ratio: 1; border-radius: 7px; background-size: cover; background-position: center; }
+  .swatches.wide .sw { aspect-ratio: 16 / 10; }
+  .sound-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .sound-list .toggle span { padding: 9px 12px; }
+  .sound-list .toggle b { font: 600 14px var(--font-body); }
+  .board2d.textured .sq.light, .board2d.textured .sq.dark { background: transparent; }
   /* Flat board: chess.com-style greens, coordinates in the edge squares. */
   .board2d {
     --size: min(calc(100vw - 280px), calc(100vh - 170px), 760px);
@@ -197,7 +210,8 @@
     border-radius: 6px; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); touch-action: none; user-select: none;
   }
   .board2d .sq { position: relative; }
-  .board2d .sq.light { background: #eeeed2; } .board2d .sq.dark { background: #769656; }
+  .board2d .sq.light { background: var(--light, #eeeed2); } .board2d .sq.dark { background: var(--dark, #769656); }
+  .board2d { background-size: 100% 100%; }
   .board2d .sq.last::before, .board2d .sq.sel::before, .board2d .sq.pre::before, .board2d .sq.over::before { content: ''; position: absolute; inset: 0; }
   .board2d .sq.last::before { background: rgba(255, 255, 51, 0.42); }
   .board2d .sq.sel::before { background: rgba(255, 255, 51, 0.55); }
@@ -206,7 +220,7 @@
   .board2d .sq.check { background-image: radial-gradient(circle, rgba(255, 0, 0, 0.9) 0%, rgba(231, 0, 0, 0.6) 30%, rgba(169, 0, 0, 0) 75%); }
   .board2d .coord { position: absolute; font: 700 calc(var(--size) / 48) var(--font-body); pointer-events: none; }
   .board2d .coord.rank { top: 3%; left: 4%; } .board2d .coord.file { bottom: 2%; right: 5%; }
-  .board2d .sq.light .coord { color: #769656; } .board2d .sq.dark .coord { color: #eeeed2; }
+  .board2d .sq.light .coord { color: var(--dark, #769656); } .board2d .sq.dark .coord { color: var(--light, #eeeed2); }
   .board2d .dot { position: absolute; inset: 35%; border-radius: 50%; background: rgba(0, 0, 0, 0.14); pointer-events: none; }
   .board2d .ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: inset 0 0 0 calc(var(--size) / 110) rgba(0, 0, 0, 0.14); pointer-events: none; }
   .board2d img { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
@@ -286,6 +300,9 @@
     <button class="icon-btn" id="viewBtn" type="button" title="Reset view" aria-label="Reset camera view">
       <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
     </button>
+    <button class="icon-btn" id="prefsBtn" type="button" title="Look and sound" aria-label="Settings: look and sound">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </button>
     <button class="icon-btn" id="newBtn" type="button" title="New game" aria-label="New game">
       <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
     </button>
@@ -356,8 +373,6 @@
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
-      <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
-      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
     </fieldset>
     <fieldset id="clockSet">
       <legend>Clock</legend>
@@ -369,17 +384,6 @@
         <label class="choice"><input type="radio" name="clock" value="10"><span>10 min</span></label>
         <label class="choice"><input type="radio" name="clock" value="15+10"><span>15 | 10</span></label>
       </div>
-    </fieldset>
-    <fieldset>
-      <legend>Sounds</legend>
-      <div class="modes">
-        <label class="choice"><input type="radio" name="sounds" id="snBattle" value="battle" checked><span><b>Battle</b><em>Swooshes, slashes, grunts</em></span></label>
-        <label class="choice"><input type="radio" name="sounds" id="snBoard" value="board"><span><b>Board</b><em>Wooden clicks, like chess.com</em></span></label>
-      </div>
-    </fieldset>
-    <fieldset>
-      <legend>Speed</legend>
-      <label class="dial"><span>Slow</span><input type="range" id="speedDial" min="0.5" max="3" step="0.25" value="1" aria-label="Animation speed"><span>Fast</span><output id="speedOut">1×</output></label>
     </fieldset>
     <fieldset>
       <legend>Play as</legend>
@@ -403,6 +407,38 @@
       <button class="btn primary" type="submit" id="startBtn">Start game</button>
     </div>
   </form>
+</div>
+
+<div class="scrim" id="prefsDlg" hidden>
+  <div class="card">
+    <div class="head">
+      <span class="eyebrow">Settings</span>
+      <h2>Look and sound</h2>
+      <p>Changes show on the board right away and are remembered.</p>
+    </div>
+    <fieldset>
+      <legend>Board</legend>
+      <div class="swatches" id="boardPick"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Background</legend>
+      <div class="swatches wide" id="bgPick"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Pieces</legend>
+      <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
+      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Pieces bend back like chess wall hooks, faces looking straight up. Not the Fighters.</em></span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Speed</legend>
+      <label class="dial"><span>Slow</span><input type="range" id="speedDial" min="0.5" max="3" step="0.25" value="1" aria-label="Animation speed"><span>Fast</span><output id="speedOut">1×</output></label>
+    </fieldset>
+    <fieldset>
+      <legend>Sounds</legend>
+      <div class="sound-list" id="soundPick"></div>
+    </fieldset>
+    <div class="actions"><button class="btn primary" type="button" id="prefsDone">Done</button></div>
+  </div>
 </div>
 
 <div class="scrim" id="promoDlg" hidden>
@@ -516,31 +552,69 @@ scene.add(fill);
 const sqPos = (sq, y = 0) => new THREE.Vector3((sq & 7) - 3.5, y, 3.5 - (sq >> 3));
 const BORDER = 0.62, SIZE = 8 + BORDER * 2;
 
-function woodCanvas() {
-  const px = 2048, c = document.createElement('canvas');
-  c.width = c.height = px;
-  const g = c.getContext('2d'), unit = px / SIZE, off = BORDER * unit;
-  let seed = 7;
+// Board looks. light/dark are the squares, ink the grain or vein colour, frame the border, side the
+// board's edges in 3D. grain: 'wood' (long wavy lines), 'marble' (soft veins), 'stone' (speckle) or 'none'.
+const BOARD_THEMES = {
+  walnut: { name: 'Walnut', light: '#d9b98a', dark: '#82593a', lightInk: '#8a6438', darkInk: '#3a2414', frame: '#3b2417', frameInk: '#120904', side: 0x2c1a10, grain: 'wood' },
+  green: { name: 'Tournament', light: '#eeeed2', dark: '#769656', frame: '#302e2b', frameInk: '#1a1917', side: 0x22211f, grain: 'none' },
+  maple: { name: 'Maple', light: '#f0d9b5', dark: '#b58863', lightInk: '#c9a77d', darkInk: '#7d5a3a', frame: '#5a3a22', frameInk: '#2a1a0e', side: 0x3d2716, grain: 'wood' },
+  marble: { name: 'Marble', light: '#ecebe7', dark: '#4f5459', lightInk: '#9c9d9b', darkInk: '#24272a', frame: '#1f2123', frameInk: '#0b0c0d', side: 0x18191b, grain: 'marble' },
+  sand: { name: 'Sandstone', light: '#ecd8ad', dark: '#b88a52', lightInk: '#a88c5c', darkInk: '#6e4c26', frame: '#5c4126', frameInk: '#2e2012', side: 0x3f2c19, grain: 'stone' },
+  ice: { name: 'Ice', light: '#dee3e6', dark: '#8ca2ad', frame: '#2f3c43', frameInk: '#1a2226', side: 0x222c31, grain: 'none' },
+  royal: { name: 'Royal', light: '#e8e0f0', dark: '#7b5ea7', frame: '#2a1f3a', frameInk: '#140e1c', side: 0x1f172b, grain: 'none' },
+  slate: { name: 'Slate', light: '#8b95a3', dark: '#353c47', lightInk: '#5d6672', darkInk: '#1c2026', frame: '#15181d', frameInk: '#07080a', side: 0x121418, grain: 'stone' }
+};
+const boardTheme = () => BOARD_THEMES[settings.board] || BOARD_THEMES.walnut;
+
+function texturer(g, seed = 7) {
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  const grain = (x, y, w, h, base, dark, vertical) => {
+  return (x, y, w, h, base, ink, vertical, grain) => {
     g.fillStyle = base; g.fillRect(x, y, w, h);
+    if (grain === 'none' || !ink) return;
     g.save(); g.beginPath(); g.rect(x, y, w, h); g.clip();
-    for (let i = 0; i < 46; i++) {
-      g.strokeStyle = dark; g.globalAlpha = 0.05 + rnd() * 0.12; g.lineWidth = 0.6 + rnd() * 2.4;
-      const t = (vertical ? x + rnd() * w : y + rnd() * h), amp = 2 + rnd() * 6, freq = 0.004 + rnd() * 0.01, ph = rnd() * 6;
-      g.beginPath();
-      for (let s = 0; s <= (vertical ? h : w); s += 8) {
-        const d = Math.sin(s * freq + ph) * amp;
-        vertical ? (s ? g.lineTo(t + d, y + s) : g.moveTo(t + d, y + s)) : (s ? g.lineTo(x + s, t + d) : g.moveTo(x + s, t + d));
+    if (grain === 'wood') {
+      for (let i = 0; i < 46; i++) {
+        g.strokeStyle = ink; g.globalAlpha = 0.05 + rnd() * 0.12; g.lineWidth = 0.6 + rnd() * 2.4;
+        const t = (vertical ? x + rnd() * w : y + rnd() * h), amp = 2 + rnd() * 6, freq = 0.004 + rnd() * 0.01, ph = rnd() * 6;
+        g.beginPath();
+        for (let s = 0; s <= (vertical ? h : w); s += 8) {
+          const d = Math.sin(s * freq + ph) * amp;
+          vertical ? (s ? g.lineTo(t + d, y + s) : g.moveTo(t + d, y + s)) : (s ? g.lineTo(x + s, t + d) : g.moveTo(x + s, t + d));
+        }
+        g.stroke();
       }
-      g.stroke();
+    } else if (grain === 'marble') {
+      // Clouding, then a few thin branching veins drifting across the square.
+      for (let i = 0; i < 10; i++) {
+        g.fillStyle = ink; g.globalAlpha = 0.03 + rnd() * 0.05;
+        g.beginPath(); g.ellipse(x + rnd() * w, y + rnd() * h, w * (0.2 + rnd() * 0.4), h * (0.1 + rnd() * 0.25), rnd() * 3, 0, 7); g.fill();
+      }
+      for (let i = 0; i < 4; i++) {
+        g.strokeStyle = ink; g.globalAlpha = 0.25 + rnd() * 0.35; g.lineWidth = 0.6 + rnd() * 1.6;
+        let px = x + rnd() * w, py = y, ang = 1.1 + rnd() * 0.9;
+        g.beginPath(); g.moveTo(px, py);
+        while (py < y + h && px > x - w && px < x + 2 * w) { ang += (rnd() - 0.5) * 0.7; px += Math.cos(ang) * 6; py += Math.sin(ang) * 6; g.lineTo(px, py); }
+        g.stroke();
+      }
+    } else if (grain === 'stone') {
+      for (let i = 0; i < w * h / 40; i++) {
+        g.fillStyle = rnd() < 0.5 ? ink : '#ffffff'; g.globalAlpha = 0.04 + rnd() * 0.1;
+        g.fillRect(x + rnd() * w, y + rnd() * h, 1 + rnd() * 2.5, 1 + rnd() * 2.5);
+      }
     }
     g.restore(); g.globalAlpha = 1;
   };
-  grain(0, 0, px, px, '#3b2417', '#120904', false);
+}
+
+// The 3D board's top: frame with labels around eight by eight squares.
+function boardCanvas(th) {
+  const px = 2048, c = document.createElement('canvas');
+  c.width = c.height = px;
+  const g = c.getContext('2d'), unit = px / SIZE, off = BORDER * unit, paint = texturer(g);
+  paint(0, 0, px, px, th.frame, th.frameInk, false, th.grain === 'none' ? 'stone' : th.grain);
   for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
     const light = (r + f) % 2 === 1;
-    grain(off + f * unit, off + (7 - r) * unit, unit, unit, light ? '#d9b98a' : '#82593a', light ? '#8a6438' : '#3a2414', (r + f) % 2 === 0);
+    paint(off + f * unit, off + (7 - r) * unit, unit, unit, light ? th.light : th.dark, light ? th.lightInk : th.darkInk, (r + f) % 2 === 0, th.grain);
   }
   g.strokeStyle = 'rgba(210,168,90,0.75)'; g.lineWidth = 3;
   g.strokeRect(off - 6, off - 6, 8 * unit + 12, 8 * unit + 12);
@@ -558,11 +632,33 @@ function woodCanvas() {
   return c;
 }
 
-const boardTex = new THREE.CanvasTexture(woodCanvas());
-boardTex.colorSpace = THREE.SRGBColorSpace;
-boardTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+// Just the squares, for the flat board's background (it reads the same turned for Black).
+function squaresImage(th) {
+  const px = 1024, c = document.createElement('canvas');
+  c.width = c.height = px;
+  const g = c.getContext('2d'), unit = px / 8, paint = texturer(g, 11);
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
+    const light = (r + f) % 2 === 1;
+    paint(f * unit, (7 - r) * unit, unit, unit, light ? th.light : th.dark, light ? th.lightInk : th.darkInk, (r + f) % 2 === 0, th.grain);
+  }
+  return c.toDataURL('image/jpeg', 0.85);
+}
+
 const sideMat = new THREE.MeshStandardMaterial({ color: 0x2c1a10, roughness: 0.55, metalness: 0.05 });
-const topMat = new THREE.MeshStandardMaterial({ map: boardTex, roughness: 0.42, metalness: 0.0 });
+const topMat = new THREE.MeshStandardMaterial({ roughness: 0.42, metalness: 0.0 });
+// Repaints both boards in the chosen look; marble is a little glossier.
+function applyBoard() {
+  const th = boardTheme(), tex = new THREE.CanvasTexture(boardCanvas(th));
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  topMat.map?.dispose();
+  topMat.map = tex; topMat.roughness = th.grain === 'marble' ? 0.25 : 0.42; topMat.needsUpdate = true;
+  sideMat.color.setHex(th.side);
+  const b = $('board2d');
+  b.style.setProperty('--light', th.light); b.style.setProperty('--dark', th.dark);
+  b.classList.toggle('textured', th.grain !== 'none');
+  b.style.backgroundImage = th.grain !== 'none' ? `url(${squaresImage(th)})` : '';
+}
 const board = new THREE.Mesh(new THREE.BoxGeometry(SIZE, 0.34, SIZE), [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
 board.position.y = -0.17;
 board.receiveShadow = true;
@@ -811,8 +907,11 @@ const sideMaterials = new Map();
 // With keepGold (an HSV saturation threshold), bright golden texels — the bust sets' crowns and
 // Tutankhamun's mask — skip the recolor and turn to polished metal, so both sides keep their gold.
 // The threshold is per piece: the Egyptian sand is itself fairly yellow, the medieval marble is not.
-function sideMaterial(src, color, keepGold = 0) {
-  const key = src.uuid + ':' + color + ':' + keepGold;
+// shine (1 = normal) brightens the gold and makes it glossier: the Egyptian set's mask is turned up.
+// band ({ mid, top } heights in the mesh's own units) marks gold by height too: above top everything
+// coloured counts, between mid and top the usual test applies, below mid nothing does.
+function sideMaterial(src, color, keepGold = 0, shine = 1, band = null) {
+  const key = src.uuid + ':' + color + ':' + keepGold + ':' + shine + ':' + (band ? band.mid + '/' + band.top : '');
   if (sideMaterials.has(key)) return sideMaterials.get(key);
   const tone = SIDE_TONES[color], m = src.clone();
   if (m.color) m.color.copy(tone.tint).multiplyScalar(tone.plain);
@@ -830,14 +929,19 @@ function sideMaterial(src, color, keepGold = 0) {
         ${keepGold ? `
         vec3 s = sampledDiffuseColor.rgb;
         float hi = max( s.r, max( s.g, s.b ) ), sat = ( hi - min( s.r, min( s.g, s.b ) ) ) / max( hi, 1e-3 );
-        gold = smoothstep( ${keepGold.toFixed(2)}, ${(keepGold + 0.1).toFixed(2)}, sat ) * smoothstep( 0.3, 0.42, hi )
+        float goldAt = ${band ? `vGoldY > ${band.top.toFixed(4)} ? 0.15 : vGoldY > ${band.mid.toFixed(4)} ? ${(keepGold - 0.05).toFixed(2)} : 9.0` : keepGold.toFixed(2)};
+        gold = smoothstep( goldAt, goldAt + 0.1, sat ) * smoothstep( ${band ? '0.12, 0.25' : '0.3, 0.42'}, hi )
           * step( s.b, s.g ) * step( s.g, s.r + 0.02 );` : ''}
-        diffuseColor.rgb *= mix( sideColor, sampledDiffuseColor.rgb * 1.15, gold );`);
+        diffuseColor.rgb *= mix( sideColor, pow( sampledDiffuseColor.rgb, vec3( ${(1 / Math.sqrt(shine)).toFixed(2)} ) ) * ${(1.15 * Math.sqrt(shine)).toFixed(2)}, gold );`);
       if (keepGold) frag = frag.replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\n  metalnessFactor = mix( metalnessFactor, 1.0, gold );')
-        .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\n  roughnessFactor = mix( roughnessFactor, 0.28, gold );');
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\n  roughnessFactor = mix( roughnessFactor, ${(0.28 / (shine * shine)).toFixed(3)}, gold );`);
+      if (band) {
+        frag = 'varying float vGoldY;\n' + frag;
+        shader.vertexShader = 'varying float vGoldY;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vGoldY = position.y;');
+      }
       shader.fragmentShader = frag;
     };
-    m.customProgramCacheKey = () => 'side' + color + 'g' + keepGold;
+    m.customProgramCacheKey = () => key;
   }
   if (color === E.BLACK && 'roughness' in m) { m.roughness = Math.min(m.roughness, 0.45); m.metalness = Math.max(m.metalness, 0.2); }
   sideMaterials.set(key, m);
@@ -958,9 +1062,27 @@ function loadClassic() {
 const BUST_HEIGHTS = { [E.PAWN]: 0.95, [E.KNIGHT]: 1.1, [E.BISHOP]: 1.2, [E.ROOK]: 1.12, [E.QUEEN]: 1.3, [E.KING]: 1.42 };
 const BUST_NAMES = { [E.PAWN]: 'pawn', [E.KNIGHT]: 'knight', [E.BISHOP]: 'bishop', [E.ROOK]: 'rook', [E.QUEEN]: 'queen', [E.KING]: 'king' };
 const BUST_SETS = {
-  egypt: { title: 'Egyptian', gold: { [E.KING]: 0.5 } },
+  // Tutankhamun's mask: all gold above the chin (66% up), gold-coloured parts from the chest (45%) up.
+  egypt: { title: 'Egyptian', gold: { [E.KING]: 0.5 }, goldBand: { [E.KING]: [0.45, 0.66] }, shine: 1.45 },
   medieval: { title: 'Medieval', gold: { [E.KING]: 0.3, [E.QUEEN]: 0.3 } }
 };
+// Page backgrounds behind the board: gradients, or pictures made with Magnific (dimmed so the board reads).
+const BACKGROUNDS = {
+  felt: { name: 'Felt', css: 'radial-gradient(120% 90% at 50% 38%, #13201d 0%, #0a1110 70%) #0a1110' },
+  midnight: { name: 'Midnight', css: 'radial-gradient(120% 90% at 50% 38%, #1d2540 0%, #080a12 70%) #080a12' },
+  ember: { name: 'Ember', css: 'radial-gradient(120% 90% at 50% 38%, #3a2016 0%, #0d0806 72%) #0d0806' },
+  temple: { name: 'Temple', img: 'backgrounds/temple.jpg' },
+  castle: { name: 'Castle', img: 'backgrounds/castle.jpg' },
+  library: { name: 'Library', img: 'backgrounds/library.jpg' },
+  space: { name: 'Space', img: 'backgrounds/space.jpg' }
+};
+function applyBackground() {
+  const bg = BACKGROUNDS[settings.background] || BACKGROUNDS.felt;
+  document.body.style.background = bg.img
+    ? `linear-gradient(rgba(5, 8, 8, 0.35), rgba(5, 8, 8, 0.55)), url(${bg.img}) center / cover no-repeat #0a1110`
+    : bg.css;
+}
+
 const STYLE_TITLES = { classic: 'classic', egypt: 'Egyptian', medieval: 'Medieval' };
 const staticSets = { classic: classicTypes, egypt: {}, medieval: {} };   // style -> code -> { node, height }
 const bustLoads = {};
@@ -978,7 +1100,14 @@ function loadBusts(name) {
         const copy = src.clone(true);
         copy.traverse((o) => {
           if (!o.isMesh) return;
-          o.material = sideMaterial(o.material, color, set.gold[type] || 0);
+          const fr = set.goldBand?.[type];
+          let band = null;
+          if (fr) {
+            o.geometry.computeBoundingBox();
+            const { min, max } = o.geometry.boundingBox, h = max.y - min.y;
+            band = { mid: min.y + h * fr[0], top: min.y + h * fr[1] };
+          }
+          o.material = sideMaterial(o.material, color, set.gold[type] || 0, set.shine || 1, band);
           o.castShadow = true; o.receiveShadow = true;
         });
         copy.position.set(-c.x, -box.min.y, -c.z);
@@ -1123,11 +1252,18 @@ const SAMPLES = {
   check: [{ file: 'check1', start: 0, len: 0.7, peak: 0.76 }, { file: 'check2', start: 0, len: 0.7, peak: 0.12 }],
   promote: [{ file: 'promote1', start: 0, len: 0.55, peak: 0.39 }, { file: 'promote2', start: 0, len: 0.6, peak: 0.99 }],
   start: [{ file: 'start1', start: 0, len: 1.4, peak: 0.39 }, { file: 'start2', start: 0, len: 1.6, peak: 1 }],
-  end: [{ file: 'end1', start: 0, len: 1.1, peak: 0.81 }, { file: 'end2', start: 0, len: 1.6, peak: 0.81 }]
+  end: [{ file: 'end1', start: 0, len: 1.1, peak: 0.81 }, { file: 'end2', start: 0, len: 1.6, peak: 0.81 }],
+  scream: [{ file: 'scream1', start: 0, len: 0.5, peak: 0.97 }, { file: 'scream2', start: 0, len: 0.3, peak: 0.98 }, { file: 'scream3', start: 0, len: 0.26, peak: 0.98 }]
 };
-const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42, move: 0.5, capture: 0.55, castle: 0.5, check: 0.35, promote: 0.4, start: 0.35, end: 0.4 };
-// "battle": slides, slashes and grunts for moves and kills; "board": wooden clicks. Chimes play in both.
-const boardSounds = () => settings.sounds === 'board';
+const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42, move: 0.5, capture: 0.55, castle: 0.5, check: 0.35, promote: 0.4, start: 0.35, end: 0.4, scream: 0.42 };
+// Every kind of sound has its own switch. Off by default: the wooden capture knock (the slash covers it).
+const SOUND_SWITCHES = [
+  ['taps', 'Piece taps', true], ['swoosh', 'Swooshes', true], ['slash', 'Sword slashes', true], ['knock', 'Capture knock', false],
+  ['grunt', 'Grunts', true], ['scream', 'Screams', true], ['chimes', 'Check chimes', true], ['startend', 'Start and end', true]
+];
+const soundOn = (k) => (settings.sfx?.[k] ?? SOUND_SWITCHES.find((x) => x[0] === k)[2]);
+// Who screams instead of grunting when killed: the female pieces of each set.
+const FEMALE = { fighters: [E.QUEEN, E.BISHOP, E.ROOK], classic: [E.QUEEN], egypt: [E.QUEEN, E.BISHOP], medieval: [E.QUEEN] };
 const sampleBytes = Object.values(SAMPLES).flat().map((c) => fetchBytes('sounds/' + c.file + '.mp3', () => {}).catch(() => null));
 
 const sfx = (() => {
@@ -1312,11 +1448,12 @@ function glide(piece, toSq, ms) {
 
 async function quietMove(piece, toSq, silent) {
   const dist = piece.position.distanceTo(sqPos(toSq));
-  if (!silent && !boardSounds()) sfx.slide((140 + dist * 25) / 1000);
+  if (!silent && soundOn('swoosh')) sfx.slide((140 + dist * 25) / 1000);
   play(piece, 'idle', { time: Math.random() });
   const id = piece.userData.motion + 1;
   piece.userData.busy = true;
   if (await glide(piece, toSq, 140 + dist * 25) && piece.userData.motion === id) {
+    if (!silent && soundOn('taps')) sfx.cue('move'); // the piece taps down on its square
     await turnTo(piece, piece.userData.facing, 150);
     if (piece.userData.motion === id) { piece.userData.busy = false; settle(piece); }
   }
@@ -1326,7 +1463,7 @@ async function quietMove(piece, toSq, silent) {
 async function killMove(attacker, victim, toSq) {
   const dist = attacker.position.distanceTo(sqPos(toSq));
   const ms = Math.min(400, 175 + dist * 32);
-  if (!boardSounds()) sfx.slide(ms / 1000);
+  if (soundOn('swoosh')) sfx.slide(ms / 1000);
   const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
   victim.userData.motion++; // stop it if it was still sliding, and put it on its square
   victim.position.copy(sqPos(victim.userData.sq));
@@ -1347,7 +1484,10 @@ async function killMove(attacker, victim, toSq) {
   attacker.userData.busy = true;
   const arrived = glide(attacker, toSq, ms);
   await wait(ms * 0.82);
-  if (!boardSounds()) { sfx.slash(); sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15); }
+  if (soundOn('slash')) sfx.slash();
+  if (soundOn('knock')) sfx.cue('capture');
+  if ((FEMALE[style] || []).includes(victim.userData.code & 7)) { if (soundOn('scream')) sfx.cue('scream'); }
+  else if (soundOn('grunt')) sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15);
   behead(victim, dir);
   await arrived;
   if (attacker.userData.motion !== id) return;
@@ -1701,7 +1841,7 @@ function newGame(side, level) {
   updateHud();
   aimCamera(true);
   controls.autoRotate = false;
-  sfx.cue('start');
+  if (soundOn('startend')) sfx.cue('start');
   maybeComputerMove();
 }
 
@@ -1717,7 +1857,7 @@ function gameOverCheck() {
 
 // Board sounds click for every move; a check or promotion adds its chime with either sound set.
 function moveSound(m, captured) {
-  if (boardSounds()) sfx.cue(captured ? 'capture' : E.flag(m) === E.F_CASTLE ? 'castle' : 'move');
+  if (!soundOn('chimes')) return;
   if (E.promo(m)) sfx.cue('promote');
   else if (game.pos.inCheck()) sfx.cue('check');
 }
@@ -2165,13 +2305,9 @@ function openSetup(cancellable) {
   $(settings.side === 'b' ? 'sdBlack' : settings.side === 'r' ? 'sdRandom' : 'sdWhite').checked = true;
   $(settings.mode === 'online' ? 'mdOnline' : 'mdAi').checked = true;
   $(STYLE_INPUTS[settings.style] || 'stFighters').checked = true;
-  $('bendBox').checked = !!settings.bend;
-  $('outlineBox').checked = settings.outline !== false;
-  $(settings.sounds === 'board' ? 'snBoard' : 'snBattle').checked = true;
   const clockInput = document.querySelector(`input[name="clock"][value="${settings.clock || 'none'}"]`);
   if (clockInput) clockInput.checked = true;
-  $('speedDial').value = settings.speed || 1;
-  showSpeed();
+
   $('setupCancel').hidden = !cancellable;
   $('onlineNote').textContent = '';
   show('setupDlg', true);
@@ -2212,11 +2348,53 @@ $('bendBox').addEventListener('change', () => {
   saveSettings();
   if (staticSets[style]) { clearPieces(); syncPieces(); drawMarks(); }
 });
-for (const id of ['snBattle', 'snBoard']) $(id).addEventListener('change', () => {
-  settings.sounds = $('snBoard').checked ? 'board' : 'battle';
-  saveSettings();
-  sfx.cue(settings.sounds === 'board' ? 'move' : 'slash');
-});
+// ---- Settings (look and sound)
+function openPrefs() {
+  $('bendBox').checked = !!settings.bend;
+  $('outlineBox').checked = settings.outline !== false;
+  $('speedDial').value = settings.speed || 1;
+  showSpeed();
+  const pick = (id, table, key, fallback, swatch, apply) => {
+    const box = $(id);
+    box.innerHTML = '';
+    for (const [name, item] of Object.entries(table)) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String((settings[key] || fallback) === name));
+      b.innerHTML = `<span class="sw"></span>${item.name}`;
+      swatch(b.firstChild, item);
+      b.onclick = () => {
+        settings[key] = name; saveSettings(); apply();
+        for (const o of box.children) o.setAttribute('aria-pressed', String(o === b));
+      };
+      box.append(b);
+    }
+  };
+  pick('boardPick', BOARD_THEMES, 'board', 'walnut', (el, th) => {
+    el.style.background = `conic-gradient(${th.dark} 25%, ${th.light} 0 50%, ${th.dark} 0 75%, ${th.light} 0) 0 0 / 50% 50%`;
+  }, applyBoard);
+  pick('bgPick', BACKGROUNDS, 'background', 'felt', (el, bg) => {
+    el.style.background = bg.img ? `url(${bg.img}) center / cover` : bg.css;
+  }, applyBackground);
+  const sounds = $('soundPick');
+  sounds.innerHTML = '';
+  for (const [key, label] of SOUND_SWITCHES) {
+    const l = document.createElement('label');
+    l.className = 'choice toggle';
+    l.innerHTML = `<input type="checkbox"><span><b>${label}</b></span>`;
+    const box = l.firstChild;
+    box.checked = soundOn(key);
+    box.onchange = () => {
+      settings.sfx = { ...settings.sfx, [key]: box.checked }; saveSettings();
+      if (box.checked) ({ taps: () => sfx.cue('move'), swoosh: () => sfx.slide(0.3), slash: () => sfx.slash(), knock: () => sfx.cue('capture'),
+        grunt: () => sfx.ugh(1), scream: () => sfx.cue('scream'), chimes: () => sfx.cue('check'), startend: () => sfx.cue('start') })[key]();
+    };
+    sounds.append(l);
+  }
+  show('prefsDlg', true);
+}
+$('prefsBtn').onclick = openPrefs;
+$('prefsDone').onclick = () => show('prefsDlg', false);
 $('outlineBox').addEventListener('change', () => {
   settings.outline = $('outlineBox').checked;
   saveSettings();
@@ -2230,7 +2408,7 @@ $('speedDial').addEventListener('input', () => {
 $('setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(e.target);
-  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, outline: $('outlineBox').checked, view: settings.view, sounds: data.get('sounds'), clock: data.get('clock'), speed: +$('speedDial').value, lock: settings.lock };
+  settings = { ...settings, level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), clock: data.get('clock') };
   await setStyle(settings.style);
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   const side = settings.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : settings.side;
@@ -2322,7 +2500,7 @@ function showEnd() {
   }
   $('endEyebrow').textContent = eyebrow; $('endTitle').textContent = title; $('endText').textContent = text;
   setEndActions();
-  sfx.cue('end');
+  if (soundOn('startend')) sfx.cue('end');
   show('endDlg', true);
   $('endAgain').focus();
 }
@@ -2647,6 +2825,8 @@ window.claude?.hot?.snapshot?.(() => ({
 const onlineReady = initOnline().catch(() => {});
 
 async function start(data) {
+  applyBoard();
+  applyBackground();
   aimCamera(true);
   controls.autoRotate = !reduceMotion && !settings.lock;
   try {
@@ -2660,8 +2840,11 @@ async function start(data) {
   templatesReady = true;
   game.legal = game.pos.legal();
   if (data && data.settings) { settings = data.settings; applySpeed(); }
+  if (settings.sounds === 'board' && !settings.sfx) settings.sfx = { swoosh: false, slash: false, grunt: false, scream: false, knock: true };
   showLock();
   showView();
+  applyBoard();
+  applyBackground();
   if (STYLE_TITLES[settings.style]) {
     $('loadText').textContent = `Setting out the ${STYLE_TITLES[settings.style]} set.`;
     try { await loadStyle(settings.style); style = settings.style; } catch {}
