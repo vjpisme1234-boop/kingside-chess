@@ -2027,25 +2027,32 @@ function introOrbit() {
 }
 // Rigged pieces bend the neck and head back; a bust's head turns on its neck; the rest lean back a little.
 // A piece stands straight again when it moves (glide) or plays an animation (the mixer resets its bones).
-const LOOK_UP_MS = 3200;
+// Like a person lying back and looking up: the head first bows (chin down), then slowly rolls back until
+// the face points straight up. lookCurve gives the share of the full tip-back, from -0.22 (bowed) to 1.
+const LOOK_UP_MS = 5000;
+function lookCurve(k) {
+  const smooth = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+  return k < 0.22 ? -0.22 * Math.sin((k / 0.22) * Math.PI / 2) : -0.22 + 1.22 * smooth((k - 0.22) / 0.78);
+}
 function piecesLookUp() {
   for (const piece of pieces.values()) {
-    const u = piece.userData, slow = (k) => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
+    const u = piece.userData, linear = (k) => k;
     u.lookUp = true;
-    const wait = Math.random() * 400; // not all in lockstep
+    const wait = Math.random() * 500; // not all in lockstep
     if (u.neck) {
-      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; u.neck.rotation.x = e * Math.PI / 2; }, slow);
+      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; u.neck.rotation.x = lookCurve(e) * Math.PI / 2; }, linear);
     } else if (u.mixer && !u.beast) {
       const bones = [];
       u.char.traverse((o) => { if (o.isBone && /neck$/i.test(o.name)) bones.push([o, 0.55]); else if (o.isBone && isHeadBone(o)) bones.push([o, 0.85]); });
       const base = bones.map(([b]) => b.quaternion.clone()), q = new THREE.Quaternion(), x = new THREE.Vector3(1, 0, 0);
       tween(LOOK_UP_MS + wait, (e) => {
         if (!u.lookUp) return false;
-        bones.forEach(([b, a], i) => b.quaternion.copy(base[i]).multiply(q.setFromAxisAngle(x, a * e)));
-      }, slow);
+        const f = lookCurve(e);
+        bones.forEach(([b, a], i) => b.quaternion.copy(base[i]).multiply(q.setFromAxisAngle(x, a * f)));
+      }, linear);
     } else {
       const tilt = u.tilt;
-      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; tilt.rotation.x = -0.32 * e; }, slow);
+      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; tilt.rotation.x = -0.32 * lookCurve(e); }, linear);
     }
   }
 }
