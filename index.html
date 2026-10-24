@@ -152,6 +152,15 @@
   }
   .modes .choice b { font: italic 700 19px/1.1 var(--font-display); }
   .modes .choice em { font-style: normal; color: var(--muted); font-size: 12px; }
+  .toggle span {
+    display: flex; flex-direction: column; gap: 2px; padding: 11px 14px; border-radius: 12px;
+    border: 1px solid var(--line); cursor: pointer;
+  }
+  .toggle b { font: italic 700 19px/1.1 var(--font-display); }
+  .toggle em { font-style: normal; color: var(--muted); font-size: 12px; }
+  .dial { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  .dial input { flex: 1; min-width: 0; accent-color: var(--brass); }
+  .dial output { font: 500 15px var(--font-mono); color: var(--ivory); min-width: 3.4em; text-align: right; }
   .lobby { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 210px; overflow: auto; }
   .lobby li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; }
   .lobby img { width: 28px; height: 28px; border-radius: 50%; flex: none; }
@@ -263,6 +272,11 @@
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
       </div>
+      <label class="choice toggle"><input type="checkbox" id="bendBox"><span><b>Bent pieces</b><em>Stems curve up like chess wall hooks. Not the Fighters.</em></span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Speed</legend>
+      <label class="dial"><span>Slow</span><input type="range" id="speedDial" min="0.5" max="3" step="0.25" value="1" aria-label="Animation speed"><span>Fast</span><output id="speedOut">1×</output></label>
     </fieldset>
     <fieldset>
       <legend>Play as</legend>
@@ -715,6 +729,40 @@ function classicMat(m) {
   return classicMats.get(m);
 }
 
+// Bends a standing piece like a chess-piece wall hook: the base stays on its square, the stem between
+// `from` and `to` (fractions of the height) curves forward along +z, and the top stands upright again,
+// `lean` squares ahead. Each mesh gets its own float copy of its geometry (the files are quantized, and
+// both sides' copies share the source geometry).
+function bendUp(node, from = 0.08, to = 0.5, lean = 0.25) {
+  node.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(node);
+  const y0 = box.min.y + (box.max.y - box.min.y) * from, y1 = box.min.y + (box.max.y - box.min.y) * to;
+  const v = new THREE.Vector3(), n = new THREE.Vector3(), inv = new THREE.Matrix4(), toNode = new THREE.Matrix3(), back = new THREE.Matrix3();
+  node.traverse((m) => {
+    if (!m.isMesh) return;
+    const g = m.geometry = m.geometry.clone(), src = g.attributes.position, nsrc = g.attributes.normal;
+    const pos = new THREE.BufferAttribute(new Float32Array(src.count * 3), 3);
+    const nor = nsrc && new THREE.BufferAttribute(new Float32Array(nsrc.count * 3), 3);
+    inv.copy(m.matrixWorld).invert();
+    toNode.getNormalMatrix(m.matrixWorld); back.getNormalMatrix(inv);
+    for (let i = 0; i < src.count; i++) {
+      v.fromBufferAttribute(src, i).applyMatrix4(m.matrixWorld);
+      const t = THREE.MathUtils.clamp((v.y - y0) / (y1 - y0), 0, 1);
+      v.z += lean * t * t * (3 - 2 * t);
+      pos.setXYZ(i, ...v.applyMatrix4(inv).toArray());
+      if (!nor) continue;
+      // Normals of a shear z += f(y) tilt by -f'(y) * nz in y.
+      const slope = lean * 6 * t * (1 - t) / (y1 - y0);
+      n.fromBufferAttribute(nsrc, i).applyMatrix3(toNode);
+      n.y -= slope * n.z;
+      nor.setXYZ(i, ...n.normalize().applyMatrix3(back).normalize().toArray());
+    }
+    g.setAttribute('position', pos);
+    if (nor) g.setAttribute('normal', nor);
+    g.computeBoundingBox(); g.computeBoundingSphere();
+  });
+}
+
 // A copy of src (in its file's world space) standing centred on its base at the origin.
 function standClassic(src, scale, yaw) {
   const copy = src.clone(true);
@@ -817,11 +865,18 @@ async function setStyle(next) {
   drawMarks();
 }
 
+// The bent version of a static piece is made the first time "Bent pieces" is on.
+function staticNode(t) {
+  if (!settings.bend) return t.node;
+  if (!t.bent) { t.bent = t.node.clone(true); bendUp(t.bent); }
+  return t.bent;
+}
+
 function makeStaticPiece(code, sq) {
   const t = staticSets[style][code], piece = new THREE.Group();
   piece.position.copy(sqPos(sq));
   const char = new THREE.Group(), tilt = new THREE.Group();
-  tilt.add(t.node.clone(true));
+  tilt.add(staticNode(t).clone(true));
   char.add(tilt);
   char.rotation.y = t.yaw || 0;
   piece.add(char);
@@ -1025,8 +1080,10 @@ addEventListener('keydown', sfx.unlock, true);
 
 // ------------------------------------------------------------------ animation
 
+// Every animation runs SLOW times its written length: the speed dial sets it (2× speed halves it).
 // Test hook: set window.kingsideSlowMotion before load to watch the animations slowed down.
-const SLOW = window.kingsideSlowMotion || 1;
+let SLOW = window.kingsideSlowMotion || 1;
+function applySpeed() { SLOW = (window.kingsideSlowMotion || 1) / (settings.speed || 1); }
 const tweens = [];
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 const easeOut = (t) => 1 - Math.pow(1 - t, 3);
@@ -1406,8 +1463,9 @@ function selectedPiece() { return selected >= 0 ? pieces.get(selected) : null; }
 // ------------------------------------------------------------------ game
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-let settings = { level: 'medium', side: 'w' };
+let settings = { level: 'medium', side: 'w', bend: false, speed: 1 };
 try { Object.assign(settings, JSON.parse(localStorage.getItem('kingside.settings') || '{}')); } catch {}
+applySpeed();
 // mode: 'ai' (vs computer) or 'online' (vs a friend through the shared database).
 const game = { pos: new E.Position(START_FEN), legal: [], history: [], keys: [], human: E.WHITE, level: 'medium', mode: 'ai', over: null, started: false, busy: false, id: 0 };
 let selected = -1, pendingPromo = null;
@@ -1499,7 +1557,7 @@ async function maybeComputerMove() {
   const id = game.id, started = performance.now();
   game.busy = true; updateHud();
   const uci = await askEngine(game.pos.fen(), game.level);
-  const pause = 400 - (performance.now() - started);
+  const pause = 400 * SLOW - (performance.now() - started);
   if (pause > 0) await new Promise((r) => setTimeout(r, pause));
   if (id !== game.id) return;
   const m = game.legal.find((x) => E.uci(x) === uci) || game.legal[0];
@@ -1811,6 +1869,9 @@ function openSetup(cancellable) {
   $(settings.side === 'b' ? 'sdBlack' : settings.side === 'r' ? 'sdRandom' : 'sdWhite').checked = true;
   $(settings.mode === 'online' ? 'mdOnline' : 'mdAi').checked = true;
   $(STYLE_INPUTS[settings.style] || 'stFighters').checked = true;
+  $('bendBox').checked = !!settings.bend;
+  $('speedDial').value = settings.speed || 1;
+  showSpeed();
   $('setupCancel').hidden = !cancellable;
   $('onlineNote').textContent = '';
   show('setupDlg', true);
@@ -1842,10 +1903,23 @@ for (const [next, id] of Object.entries(STYLE_INPUTS)) $(id).addEventListener('c
   setStyle(next);
 });
 
+// Bending and speed apply right away too, even mid-game.
+const saveSettings = () => { try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {} };
+function showSpeed() { $('speedOut').textContent = `${+$('speedDial').value}×`; }
+$('bendBox').addEventListener('change', () => {
+  settings.bend = $('bendBox').checked;
+  saveSettings();
+  if (staticSets[style]) { clearPieces(); syncPieces(); drawMarks(); }
+});
+$('speedDial').addEventListener('input', () => {
+  settings.speed = +$('speedDial').value;
+  showSpeed(); applySpeed(); saveSettings();
+});
+
 $('setupForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const data = new FormData(e.target);
-  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style') };
+  settings = { level: data.get('level'), side: data.get('side'), mode: data.get('mode'), style: data.get('style'), bend: $('bendBox').checked, speed: +$('speedDial').value };
   await setStyle(settings.style);
   try { localStorage.setItem('kingside.settings', JSON.stringify(settings)); } catch {}
   const side = settings.side === 'r' ? (Math.random() < 0.5 ? 'w' : 'b') : settings.side;
@@ -2034,7 +2108,7 @@ async function start(data) {
   }
   templatesReady = true;
   game.legal = game.pos.legal();
-  if (data && data.settings) settings = data.settings;
+  if (data && data.settings) { settings = data.settings; applySpeed(); }
   if (STYLE_TITLES[settings.style]) {
     $('loadText').textContent = `Setting out the ${STYLE_TITLES[settings.style]} set.`;
     try { await loadStyle(settings.style); style = settings.style; } catch {}
