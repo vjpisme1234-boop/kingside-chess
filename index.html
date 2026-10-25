@@ -1037,52 +1037,25 @@ function loadClassic() {
 const BUST_HEIGHTS = { [E.PAWN]: 0.95, [E.KNIGHT]: 1.1, [E.BISHOP]: 1.2, [E.ROOK]: 1.12, [E.QUEEN]: 1.3, [E.KING]: 1.42 };
 const BUST_NAMES = { [E.PAWN]: 'pawn', [E.KNIGHT]: 'knight', [E.BISHOP]: 'bishop', [E.ROOK]: 'rook', [E.QUEEN]: 'queen', [E.KING]: 'king' };
 const BUST_SETS = {
-  // Tutankhamun's mask: all gold above the chin (66% up), gold-coloured parts from the chest (45%) up.
-  egypt: { title: 'Egyptian', gold: { [E.KING]: 0.5 }, goldBand: { [E.KING]: [0.45, 0.66] }, shine: 1.45 },
-  medieval: { title: 'Medieval', gold: { [E.KING]: 0.3, [E.QUEEN]: 0.3 } }
+  egypt: { title: 'Egyptian', shine: 1.45 },
+  medieval: { title: 'Medieval' }
 };
-// Each bust's pedestal is swapped for a body built in code: [where the pedestal stops, as a fraction of the
-// model's height; the kind of body]. Rooks (the obelisk and the tower) aren't people and keep their pedestals.
-const BUST_BODIES = {
-  egypt: { [E.KING]: [0.46, 'robe'], [E.QUEEN]: [0.37, 'gown'], [E.BISHOP]: [0.39, 'gown'], [E.KNIGHT]: [0.43, 'kilt'], [E.PAWN]: [0.39, 'mummy'] },
-  medieval: { [E.KING]: [0.42, 'robe'], [E.QUEEN]: [0.37, 'gown'], [E.BISHOP]: [0.44, 'robe'], [E.KNIGHT]: [0.44, 'tunic'], [E.PAWN]: [0.51, 'tunic'] }
+// Every piece but the rook is a full-body statue, made with Magnific from the user's two king pictures
+// (the other pieces' pictures keep their own bust's head and follow their king's style). neck: where the
+// chin is, as a share of the statue's height (the head splits off there); gold: the saturation that counts
+// as gold, kept on both sides; yaw: the turn that makes it face +z (the people face +x in their files, the
+// horse already faces +z; beast: no neck bend, it leans back). Rooks stay the obelisk and the tower on their pedestals.
+const FULL_BODIES = {
+  egypt: {
+    [E.KING]: { neck: 0.785, gold: 0.45 }, [E.QUEEN]: { neck: 0.77 }, [E.BISHOP]: { neck: 0.785 },
+    [E.KNIGHT]: { neck: 0.756 }, [E.PAWN]: { neck: 0.84 }
+  },
+  medieval: {
+    [E.KING]: { neck: 0.83, gold: 0.3 }, [E.QUEEN]: { neck: 0.84, gold: 0.3 }, [E.BISHOP]: { neck: 0.865 },
+    [E.KNIGHT]: { neck: 0.72, yaw: 0, beast: true }, [E.PAWN]: { neck: 0.82 }
+  }
 };
-const BODY_RATIO = 1.3;     // body height : bust height
-const BODY_GROW = 1.12;     // a piece with a body stands this much taller than its old bust
-
-// Drops the triangles below frac of src's height (the pedestal). Returns the box of what's left and the
-// box of its lowest part (the shoulders), both in src's space.
-function stripPedestal(src, frac) {
-  src.updateMatrixWorld(true);
-  const all = new THREE.Box3().setFromObject(src), H = all.max.y - all.min.y, cutY = all.min.y + H * frac;
-  const box = new THREE.Box3(), shoulders = new THREE.Box3(), v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  src.traverse((m) => {
-    if (!m.isMesh) return;
-    const g = m.geometry, pos = g.attributes.position;
-    const idx = g.index ? (i) => g.index.getX(i) : (i) => i, count = g.index ? g.index.count : pos.count;
-    const groups = g.groups.length ? g.groups : [{ start: 0, count, materialIndex: 0 }];
-    const keep = [], keptGroups = [];
-    for (const grp of groups) {
-      const groupStart = keep.length;
-      for (let i = grp.start; i < Math.min(count, grp.start + grp.count); i += 3) {
-        const ids = [idx(i), idx(i + 1), idx(i + 2)];
-        ids.forEach((k, j) => v[j].fromBufferAttribute(pos, k).applyMatrix4(m.matrixWorld));
-        if ((v[0].y + v[1].y + v[2].y) / 3 <= cutY) continue;
-        keep.push(...ids);
-        for (const p of v) { box.expandByPoint(p); if (p.y < cutY + H * 0.15) shoulders.expandByPoint(p); }
-      }
-      keptGroups.push({ start: groupStart, count: keep.length - groupStart, materialIndex: grp.materialIndex });
-    }
-    const kept = new THREE.BufferGeometry();
-    for (const [k, attr] of Object.entries(g.attributes)) kept.setAttribute(k, attr);
-    kept.setIndex(keep);
-    for (const grp of keptGroups) kept.addGroup(grp.start, grp.count, grp.materialIndex);
-    kept.boundingBox = null;
-    m.geometry = kept;
-  });
-  return { box, shoulders, neckY: all.min.y + H * 0.76 };
-}
-
+const BODY_HEIGHTS = { [E.PAWN]: 1.0, [E.KNIGHT]: 1.12, [E.BISHOP]: 1.26, [E.QUEEN]: 1.34, [E.KING]: 1.44 };
 // Moves the triangles above neckY onto their own meshes inside a 'neck' group that sits at the neck, so
 // the head can turn on it (rotation.x tips the face back until it looks up at the sky).
 function splitHead(src, neckY) {
@@ -1126,90 +1099,6 @@ function splitHead(src, neckY) {
   src.add(neck);
 }
 
-// Cloth with a fine stone grain, recolored per side like the busts (shade < 1 is darker, for trim), and
-// gold that both sides share.
-const grainMats = new Map();
-function bodyMat(color, shade = 1) {
-  if (!grainMats.has(shade)) {
-    const cv = document.createElement('canvas'), n = 128;
-    cv.width = cv.height = n;
-    const cx = cv.getContext('2d'), img = cx.createImageData(n, n);
-    for (let i = 0; i < n * n; i++) {
-      const v = 255 * shade * (0.62 + 0.22 * Math.random() + 0.08 * Math.sin(i / n * 0.9 + (i % n) * 0.05));
-      img.data.set([v, v, v, 255], i * 4);
-    }
-    cx.putImageData(img, 0, 0);
-    const map = new THREE.CanvasTexture(cv);
-    map.wrapS = map.wrapT = THREE.RepeatWrapping; map.repeat.set(3, 3); map.colorSpace = THREE.SRGBColorSpace;
-    grainMats.set(shade, new THREE.MeshStandardMaterial({ map, roughness: 0.75 }));
-  }
-  return sideMaterial(grainMats.get(shade), color);
-}
-const goldMat = new THREE.MeshStandardMaterial({ color: 0xd8a944, metalness: 1, roughness: 0.3 });
-
-// A body in the piece's own frame (facing +z, standing on y = 0) whose top, at y = B, meets the bust's
-// shoulders: rw is their half-width, rd their half-depth. kind: robe, gown (flared), kilt or tunic
-// (with legs), mummy (wrapped).
-function makeBody(kind, B, rw, rd, color, gold) {
-  const body = new THREE.Group(), cloth = bodyMat(color), trim = gold ? goldMat : bodyMat(color, 0.62);
-  const deep = THREE.MathUtils.clamp(rd / rw, 0.7, 1), waistY = 0.6 * B;
-  const short = kind === 'kilt' || kind === 'tunic';
-  const waist = rw * (kind === 'gown' ? 0.6 : kind === 'mummy' ? 0.68 : 0.72);
-  const hemY = kind === 'kilt' ? 0.5 * B : kind === 'tunic' ? 0.4 * B : 0;
-  const hem = Math.min(0.4, kind === 'gown' ? rw * 1.5 : kind === 'robe' ? rw * 1.22 : kind === 'mummy' ? rw * 0.42 : rw * 0.95);
-  // The lathe's outline from the hem up, closed at the bottom and tucked into the bust at the top.
-  const outline = kind === 'mummy'
-    ? [[hem, 0], [hem * 1.08, 0.08 * B], [rw * 0.6, 0.42 * B], [waist, waistY], [rw * 0.94, 0.9 * B], [rw * 0.86, B]]
-    : [[hem, hemY], [hem * 0.98, hemY + 0.05 * B], [waist * 1.04, waistY - 0.04 * B], [waist, waistY], [rw * 0.94, 0.9 * B], [rw * 0.86, B]];
-  const radiusAt = (y) => {
-    for (let i = 1; i < outline.length; i++) {
-      const [r0, y0] = outline[i - 1], [r1, y1] = outline[i];
-      if (y <= y1) return r0 + (r1 - r0) * (y - y0) / (y1 - y0);
-    }
-    return outline[outline.length - 1][0];
-  };
-  const pts = [[0, outline[0][1]], ...outline, [rw * 0.6, B + 0.05 * B], [0, B + 0.05 * B]].map(([r, y]) => new THREE.Vector2(r, y));
-  const add = (geo, mat, x = 0, y = 0, z = 0) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true;
-    body.add(m);
-    return m;
-  };
-  add(new THREE.LatheGeometry(pts, 32), cloth).scale.z = deep;
-  // Belt (none on the mummy, whose bands do the same job).
-  if (kind !== 'mummy') {
-    const belt = add(new THREE.TorusGeometry(waist * 1.02, Math.max(0.012, waist * 0.08), 8, 32), trim, 0, waistY);
-    belt.rotation.x = Math.PI / 2; belt.scale.y = deep;
-  }
-  // Bandages round the mummy, slightly askew.
-  if (kind === 'mummy') {
-    for (let y = 0.07 * B, i = 0; y < 0.95 * B; y += 0.085 * B, i++) {
-      const band = add(new THREE.TorusGeometry(radiusAt(y) * 1.01, 0.008, 5, 28), bodyMat(color, 0.85), 0, y);
-      band.rotation.set(Math.PI / 2 + (i % 2 ? 0.14 : -0.09), (i % 3 - 1) * 0.08, 0);
-      band.scale.y = deep;
-    }
-  }
-  // Legs below a short skirt, with feet pointing forward.
-  if (short) {
-    const lr = rw * 0.2, lx = rw * 0.36;
-    for (const s of [-1, 1]) {
-      add(new THREE.CylinderGeometry(lr, lr * 0.85, hemY + 0.06 * B, 12), trim === goldMat ? bodyMat(color, 0.62) : trim, s * lx, (hemY + 0.06 * B) / 2);
-      add(new THREE.BoxGeometry(lr * 1.9, lr * 1.1, lr * 3), bodyMat(color, 0.62), s * lx, lr * 0.55, lr * 0.7);
-    }
-  }
-  // Arms hang from under the bust's shoulders to the hips; hands at the ends.
-  const ar = rw * 0.17, top = B * 0.98, len = B * 0.42, ax = rw * 0.98 - ar * 0.4;
-  for (const s of [-1, 1]) {
-    const arm = add(new THREE.CapsuleGeometry(ar, len, 4, 10), cloth, s * ax, top - len / 2);
-    arm.rotation.z = s * 0.08;
-    add(new THREE.SphereGeometry(ar * 1.1, 12, 8), kind === 'mummy' ? bodyMat(color, 0.8) : bodyMat(color, 0.85), s * (ax + len * 0.04), top - len - ar * 0.6);
-    if (kind === 'mummy') for (let k = 1; k < 4; k++) {
-      const band = add(new THREE.TorusGeometry(ar * 1.02, 0.009, 6, 16), bodyMat(color, 0.8), s * (ax + len * 0.01 * k), top - len * k / 4);
-      band.rotation.x = Math.PI / 2 + 0.15;
-    }
-  }
-  return body;
-}
 // Page backgrounds behind the board: gradients, or pictures made with Magnific (dimmed so the board reads).
 const BACKGROUNDS = {
   felt: { name: 'Felt', css: 'radial-gradient(120% 90% at 50% 38%, #13201d 0%, #0a1110 70%) #0a1110' },
@@ -1235,44 +1124,27 @@ function loadBusts(name) {
   bustLoads[name] ||= (async () => {
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder), set = BUST_SETS[name];
     const kinds = Object.keys(BUST_NAMES).map(Number);
-    const bufs = await Promise.all(kinds.map((t) => fetchBytes(`characters/${name}-${BUST_NAMES[t]}.txt`, () => {}).then(fromBase64)));
+    const file = (t) => `characters/${name}-${BUST_NAMES[t]}${FULL_BODIES[name][t] ? '-body' : ''}.txt`;
+    const bufs = await Promise.all(kinds.map((t) => fetchBytes(file(t), () => {}).then(fromBase64)));
     for (let i = 0; i < kinds.length; i++) {
-      const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene, strip = BUST_BODIES[name][type];
-      // With a body, only the bust is kept; the body stands under its shoulders, centred on the square.
-      const { box, shoulders, neckY } = strip ? stripPedestal(src, strip[0]) : { box: new THREE.Box3().setFromObject(src) };
-      if (strip) splitHead(src, neckY);
-      const size = box.getSize(new THREE.Vector3()), c = (shoulders || box).getCenter(new THREE.Vector3());
-      const tall = strip ? BUST_HEIGHTS[type] * BODY_GROW / (1 + BODY_RATIO) : BUST_HEIGHTS[type];
+      const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene, full = FULL_BODIES[name][type];
+      const box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+      const cut = full ? full.neck : 0.76;
+      if (full && !full.beast) splitHead(src, box.min.y + size.y * cut); // the horse leans back instead
+      const tall = full ? BODY_HEIGHTS[type] : BUST_HEIGHTS[type];
       const scale = Math.min(tall / size.y, 0.86 / Math.max(size.x, size.z));
-      const B = strip ? size.y * scale * BODY_RATIO : 0;
       for (const color of [E.WHITE, E.BLACK]) {
         const copy = src.clone(true);
         copy.traverse((o) => {
           if (!o.isMesh) return;
-          const fr = set.goldBand?.[type];
-          let band = null;
-          if (fr) {
-            o.geometry.computeBoundingBox();
-            const { min, max } = o.geometry.boundingBox, h = max.y - min.y;
-            band = { mid: min.y + h * fr[0], top: min.y + h * fr[1] };
-          }
-          o.material = sideMaterial(o.material, color, set.gold[type] || 0, set.shine || 1, band);
+          o.material = sideMaterial(o.material, color, full?.gold || 0, set.shine || 1);
           o.castShadow = true; o.receiveShadow = true;
         });
         copy.position.set(-c.x, -box.min.y, -c.z);
-        const bust = new THREE.Group(); bust.add(copy);
-        bust.scale.setScalar(scale); bust.rotation.y = -Math.PI / 2; bust.position.y = B;
-        const node = new THREE.Group(); node.add(bust);
-        const height = B + size.y * scale;
-        let cut = 0.76;
-        if (strip) {
-          // The bust faces +x in its file, so its shoulders run along z.
-          const s = shoulders.getSize(new THREE.Vector3()), rw = Math.min(0.34, s.z / 2 * scale), rd = s.x / 2 * scale;
-          node.add(makeBody(strip[1], B, rw, rd, color, type === E.KING || type === E.QUEEN));
-          // The neck sat at 76% of bust and pedestal; it is the same point on the bust now.
-          cut = (B + (0.76 - strip[0]) / (1 - strip[0]) * size.y * scale) / height;
-        }
-        staticSets[name][color | type] = { node, height, bust: true, cut };
+        const statue = new THREE.Group(); statue.add(copy);
+        statue.scale.setScalar(scale); statue.rotation.y = full?.yaw ?? -Math.PI / 2;
+        const node = new THREE.Group(); node.add(statue);
+        staticSets[name][color | type] = { node, height: size.y * scale, bust: true, cut };
       }
     }
   })();
@@ -2245,14 +2117,15 @@ function lookPose(piece) {
   return (f) => { tilt.rotation.x = -0.32 * f; };
 }
 
-// Bends a static piece back through the neck. In the model's space (standing on y = 0, facing +z) every
-// point above the base of the neck turns about the neck by an angle that grows from 0 there to the full
-// turn at the chin, so the surface stays whole. The piece gets its own copies of the meshes it bends.
+// Bends a static piece back through the neck and upper back. In the model's space (standing on y = 0,
+// facing +z) the stretch from y0 to y1 curves along an arc, the way a spine does, and everything above it
+// turns with the top of the arc; each slice stays square to the curve, so the surface stays whole. The
+// piece gets its own copies of the meshes it bends.
 function neckBend(piece) {
   const u = piece.userData, model = u.tilt.children[0];
-  const neckY = u.cut * u.height, y0 = neckY - 0.08 * u.height, y1 = neckY + 0.02 * u.height;
+  const neckY = u.cut * u.height, y0 = neckY - 0.2 * u.height, y1 = neckY + 0.04 * u.height;
   const toModel = model.matrixWorld.clone().invert(), v = new THREE.Vector3(), n = new THREE.Vector3();
-  const meshes = [], copies = new Map(), centre = new THREE.Vector3();
+  const meshes = [], copies = new Map(), heads = [];
   let count = 0;
   model.traverse((m) => { if (m.isMesh && !m.userData.outline) meshes.push(m); });
   const jobs = [];
@@ -2265,7 +2138,7 @@ function neckBend(piece) {
       if (v.y <= y0) continue;
       idx.push(i); base.push(v.x, v.y, v.z);
       if (nor) { n.fromBufferAttribute(nor, i).applyMatrix3(nM).normalize(); baseN.push(n.x, n.y, n.z); }
-      if (v.y > neckY) { centre.add(v); count++; }
+      if (v.y > neckY) { heads.push(v.x, v.z); count++; }
     }
     if (!idx.length) continue;
     // A float copy of the geometry for this piece (the originals are shared by every piece of the kind).
@@ -2280,26 +2153,37 @@ function neckBend(piece) {
     copies.set(g, copy);
     jobs.push({ copy, back, nBack, idx, base: new Float32Array(base), baseN: nor ? new Float32Array(baseN) : null });
   }
-  if (count) centre.divideScalar(count);
+  // The head's centre is the median of what's above the chin (a staff or spear held up beside it is only a
+  // few points). Staffs and spears are held out to the side, so the bend fades out from 1.2 to 2 head
+  // half-widths left or right of the head (not front to back: a crown or hair leaning back bends whole).
+  const median = (k) => { const a = []; for (let i = k; i < heads.length; i += 2) a.push(heads[i]); a.sort((x, y) => x - y); return a[a.length >> 1] || 0; };
+  const px = median(0), pz0 = median(1);
+  const dists = []; for (let i = 0; i < heads.length; i += 2) dists.push(Math.abs(heads[i] - px));
+  dists.sort((x, y) => x - y);
+  const r = dists[Math.floor(dists.length * 0.9)] || 0.1, near = r * 1.2, far = r * 2, L = y1 - y0;
   // The outlines share each mesh's geometry, so they get the copy too.
   const swapped = [];
   model.traverse((m) => { if (m.isMesh && copies.has(m.geometry)) { swapped.push([m, m.geometry]); m.geometry = copies.get(m.geometry); m.frustumCulled = false; } });
-  const pz = centre.z;
+  const pz = pz0;
   let last = 0;
   const pose = (f) => {
     if (f === last) return;
     last = f;
-    const turn = f * Math.PI / 2;
+    // The arc's radius is its length over the turn; its centre sits behind the neck (in front while bowing).
+    const turn = f * Math.PI / 2, R = Math.abs(turn) < 1e-4 ? 1e9 : L / turn;
     for (const { copy, back, nBack, idx, base, baseN } of jobs) {
       const P = copy.attributes.position, N = copy.attributes.normal;
       for (let j = 0; j < idx.length; j++) {
-        const y = base[j * 3 + 1], k = Math.min(1, (y - y0) / (y1 - y0)), w = k * k * (3 - 2 * k), a = turn * w, c = Math.cos(a), s = Math.sin(a);
-        const dy = y - y0, dz = base[j * 3 + 2] - pz;
-        v.set(base[j * 3], y0 + dy * c + dz * s, pz + dz * c - dy * s).applyMatrix4(back);
+        const x = base[j * 3], y = base[j * 3 + 1], z = base[j * 3 + 2], h = Math.abs(x - px);
+        const side = h <= near ? 1 : h >= far ? 0 : 1 - (h - near) / (far - near), w = side * side * (3 - 2 * side);
+        const dy = y - y0, t = Math.min(dy, L), past = dy - t, phi = turn * t / L, rr = R + (z - pz);
+        const c = Math.cos(phi), s = Math.sin(phi);
+        const by = y0 + rr * s + past * c, bz = pz - R + rr * c - past * s;
+        v.set(x, y + (by - y) * w, z + (bz - z) * w).applyMatrix4(back);
         P.setXYZ(idx[j], v.x, v.y, v.z);
         if (baseN) {
-          const ny = baseN[j * 3 + 1], nz = baseN[j * 3 + 2];
-          n.set(baseN[j * 3], ny * c + nz * s, nz * c - ny * s).applyMatrix3(nBack).normalize();
+          const a = phi * w, ca = Math.cos(a), sa = Math.sin(a), ny = baseN[j * 3 + 1], nz = baseN[j * 3 + 2];
+          n.set(baseN[j * 3], ny * ca + nz * sa, nz * ca - ny * sa).applyMatrix3(nBack).normalize();
           N.setXYZ(idx[j], n.x, n.y, n.z);
         }
       }
