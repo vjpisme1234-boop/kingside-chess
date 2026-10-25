@@ -211,6 +211,9 @@
     border-radius: 6px; overflow: hidden; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45); touch-action: none; user-select: none;
   }
   .board2d .sq { position: relative; }
+  .fx2d { position: fixed; pointer-events: none; z-index: 30; }
+  .fx2d img { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .fx2d i { position: absolute; left: 50%; top: 50%; border-radius: 50%; }
   .board2d .sq.light { background: var(--light, #eeeed2); } .board2d .sq.dark { background: var(--dark, #769656); }
   .board2d { background-size: 100% 100%; }
   .board2d .sq.last::before, .board2d .sq.sel::before, .board2d .sq.pre::before, .board2d .sq.over::before { content: ''; position: absolute; inset: 0; }
@@ -438,6 +441,11 @@
     <fieldset>
       <legend>Pieces</legend>
       <label class="choice toggle"><input type="checkbox" id="outlineBox" checked><span><b>Dark outlines</b><em>A black edge around every piece so it stands out from the board.</em></span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Captures</legend>
+      <label class="choice"><input type="radio" name="capture" id="capSmoke" value="smoke" checked><span><b>Smoke</b><em>The captured piece breaks up and drifts away as smoke</em></span></label>
+      <label class="choice"><input type="radio" name="capture" id="capBlood" value="behead"><span><b>Blood</b><em>The captured piece loses its head and falls</em></span></label>
     </fieldset>
     <fieldset>
       <legend>On screen</legend>
@@ -1724,7 +1732,8 @@ async function killMove(attacker, victim, toSq) {
   if (soundOn('knock')) sfx.cue('capture');
   if ((FEMALE[style] || []).includes(victim.userData.code & 7)) { if (soundOn('scream')) sfx.cue('scream'); }
   else if (soundOn('grunt')) sfx.ugh((victim.userData.code & 7) === E.PAWN ? 0.85 : 1.15);
-  behead(victim, dir);
+  if (settings.capture === 'behead') behead(victim, dir);
+  else disintegrate(victim, 'smoke', () => dropPiece(victim));
   await arrived;
   if (attacker.userData.motion !== id) return;
   await wait(40);
@@ -2014,8 +2023,14 @@ function victoryWave(color) {
 // Checkmate: the beaten king disintegrates, like Magnific's "Disintegration Effect" template. His
 // triangles become loose fragments (from the crown down) that glow like embers, shrink, spin away on a
 // drift that rises, and fade out. Each fragment keeps the king's own material, so it keeps its colours.
+// A captured piece goes the same way, faster and as smoke: the fragments grey over and puffs rise.
 const DUST_MS = 3200;
-function disintegrate(piece) {
+const DUST = {
+  king: { ms: DUST_MS, spread: 1.5, life: 1.2, ember: true },
+  smoke: { ms: 1900, spread: 0.45, life: 0.8, smoke: true }
+};
+function disintegrate(piece, mode = 'king', done = null) {
+  const o = DUST[mode];
   piece.updateMatrixWorld(true);
   const u = piece.userData, box = new THREE.Box3().setFromObject(u.char), H = Math.max(0.01, box.max.y - box.min.y);
   const uT = { value: 0 }, parts = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -2034,7 +2049,7 @@ function disintegrate(piece) {
         const mid = a.clone().add(b).add(c).divideScalar(3);
         const out = new THREE.Vector3(mid.x - piece.position.x, 0, mid.z - piece.position.z).normalize();
         const rand = [out.x * 0.5 + (Math.random() - 0.5) * 0.7, 0.2 + Math.random() * 0.5, out.z * 0.5 + (Math.random() - 0.5) * 0.7];
-        const delay = (1 - (mid.y - box.min.y) / H) * 1.5 + Math.random() * 0.35;
+        const delay = (1 - (mid.y - box.min.y) / H) * o.spread + Math.random() * 0.25 * o.spread;
         [a, b, c].forEach((v, j) => {
           P.push(v.x, v.y, v.z); C.push(mid.x, mid.y, mid.z); R.push(...rand); D.push(delay);
           if (nor) { n.fromBufferAttribute(nor, ks[j]).applyMatrix3(nm).normalize(); N.push(n.x, n.y, n.z); }
@@ -2056,7 +2071,7 @@ function disintegrate(piece) {
         shader.uniforms.uT = uT;
         shader.vertexShader = 'uniform float uT;\nattribute vec3 aCenter;\nattribute vec3 aRand;\nattribute float aDelay;\nvarying float vDust;\n' +
           shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
-            float k = clamp( ( uT - aDelay ) / 1.2, 0.0, 1.0 );
+            float k = clamp( ( uT - aDelay ) / ${o.life.toFixed(2)}, 0.0, 1.0 );
             vDust = k;
             float ang = k * 6.0 * ( aRand.y + 0.3 );
             vec3 d = transformed - aCenter;
@@ -2066,12 +2081,13 @@ function disintegrate(piece) {
               + aRand * k * 1.1 + vec3( 0.0, 0.9, 0.0 ) * k * k
               + vec3( sin( aCenter.y * 23.0 + uT * 3.0 ), 0.0, cos( aCenter.x * 19.0 + uT * 2.0 ) ) * 0.06 * k;`);
         shader.fragmentShader = 'varying float vDust;\n' + shader.fragmentShader
-          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-            totalEmissiveRadiance += vec3( 1.0, 0.55, 0.18 ) * smoothstep( 0.0, 0.08, vDust ) * ( 1.0 - smoothstep( 0.25, 0.8, vDust ) ) * 2.2;`)
+          .replace('#include <emissivemap_fragment>', o.ember ? `#include <emissivemap_fragment>
+            totalEmissiveRadiance += vec3( 1.0, 0.55, 0.18 ) * smoothstep( 0.0, 0.08, vDust ) * ( 1.0 - smoothstep( 0.25, 0.8, vDust ) ) * 2.2;` : '#include <emissivemap_fragment>')
           .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+            ${o.smoke ? 'gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3( 0.32, 0.31, 0.3 ), smoothstep( 0.0, 0.35, vDust ) );' : ''}
             gl_FragColor.a *= 1.0 - smoothstep( 0.45, 1.0, vDust );`);
       };
-      mat.customProgramCacheKey = () => (src.customProgramCacheKey?.() || src.uuid) + ':dust';
+      mat.customProgramCacheKey = () => (src.customProgramCacheKey?.() || src.uuid) + ':dust-' + mode;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.frustumCulled = false;
       parts.push(mesh);
@@ -2079,14 +2095,50 @@ function disintegrate(piece) {
     }
   });
   piece.visible = false;
+  if (o.smoke) smokePuffs(box);
   let t = 0;
   effects.push({ update(dt) {
     t += dt;
     uT.value = t;
-    if (t * 1000 < DUST_MS) return true;
+    if (t * 1000 < o.ms) return true;
     for (const m of parts) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    done?.();
     return false;
   } });
+}
+
+// Soft grey puffs that swell and rise out of the space a piece stood in, then thin away.
+let smokeTex = null;
+function smokePuffs(box) {
+  smokeTex ||= dotTexture((cx) => {
+    const g = cx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0, 'rgba(255,255,255,0.9)'); g.addColorStop(0.45, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    cx.fillStyle = g; cx.fillRect(0, 0, 128, 128);
+  });
+  const c = box.getCenter(new THREE.Vector3()), H = box.max.y - box.min.y;
+  for (let i = 0; i < 16; i++) {
+    const shade = 0.42 + Math.random() * 0.25;
+    const mat = new THREE.SpriteMaterial({ map: smokeTex, color: new THREE.Color(shade, shade, shade * 0.97), transparent: true, depthWrite: false, opacity: 0 });
+    const puff = new THREE.Sprite(mat);
+    const at = new THREE.Vector3(c.x + (Math.random() - 0.5) * 0.35, box.min.y + H * Math.random(), c.z + (Math.random() - 0.5) * 0.35);
+    const drift = new THREE.Vector3((Math.random() - 0.5) * 0.25, 0.45 + Math.random() * 0.4, (Math.random() - 0.5) * 0.25);
+    const delay = Math.random() * 0.35, life = 1.2 + Math.random() * 0.6, size = 0.35 + Math.random() * 0.3, spin = (Math.random() - 0.5) * 1.5;
+    puff.position.copy(at);
+    scene.add(puff);
+    let t = -delay;
+    effects.push({ update(dt) {
+      t += dt;
+      if (t < 0) return true;
+      const k = Math.min(1, t / life);
+      puff.position.addScaledVector(drift, dt);
+      puff.scale.setScalar(size * (0.5 + 1.6 * k));
+      mat.rotation += spin * dt;
+      mat.opacity = 0.6 * Math.min(1, k * 6) * (1 - k);
+      if (k < 1) return true;
+      scene.remove(puff); mat.dispose();
+      return false;
+    } });
+  }
 }
 
 function selectedPiece() { return selected >= 0 ? pieces.get(selected) : null; }
@@ -2143,7 +2195,7 @@ function resetBoard() {
   game.pos = new E.Position(START_FEN);
   game.history = []; game.keys = [game.pos.key()];
   game.legal = game.pos.legal();
-  game.over = null; game.busy = false;
+  game.over = null; game.busy = false; gone2d = -1;
   selected = -1; viewPly = null; premove = null; game.clock = null;
   clearPieces();
   clearStains();
@@ -2377,11 +2429,18 @@ async function playMove(m, animate = true) {
   game.over = gameOverCheck();
   drawMarks();
   updateHud();
+  if (animate && captured && is2d()) {
+    const capSq = E.flag(m) === E.F_EP ? E.to(m) + (color === E.WHITE ? -8 : 8) : E.to(m);
+    fx2d(settings.capture === 'behead' ? 'blood' : 'smoke', capSq, captured, 90);
+  }
   if (game.over) {
     if (!animate) { showEnd(); return; }
     if (game.over.kind === 'mate') {
       const king = [...pieces.values()].find((pc) => pc.userData.code === ((game.over.winner ^ E.BLACK) | E.KING));
       if (king) setTimeout(() => { if (game.over && pieces.get(king.userData.sq) === king) disintegrate(king); }, 600);
+      const loser = game.over.winner ^ E.BLACK, kingSq = p.kings[loser];
+      if (is2d()) fx2d('dust', kingSq, loser | E.KING, 600);
+      setTimeout(() => { if (game.over) { gone2d = kingSq; render2d(); } }, 650);
       setTimeout(() => victoryWave(game.over.winner), 900);
     }
     setTimeout(showEnd, game.over.kind === 'mate' ? 600 + DUST_MS : 1500);
@@ -2937,6 +2996,7 @@ function showSpeed() { $('speedOut').textContent = `${+$('speedDial').value}×`;
 // ---- Settings (look and sound)
 function openPrefs() {
   $('outlineBox').checked = settings.outline !== false;
+  $(settings.capture === 'behead' ? 'capBlood' : 'capSmoke').checked = true;
   $('moveListBox').checked = !!settings.moveList;
   $('speedDial').value = settings.speed || 1;
   showSpeed();
@@ -2981,6 +3041,10 @@ function openPrefs() {
 }
 $('prefsBtn').onclick = openPrefs;
 $('prefsDone').onclick = () => show('prefsDlg', false);
+for (const id of ['capSmoke', 'capBlood']) $(id).addEventListener('change', () => {
+  settings.capture = $('capBlood').checked ? 'behead' : 'smoke';
+  saveSettings();
+});
 $('outlineBox').addEventListener('change', () => {
   settings.outline = $('outlineBox').checked;
   saveSettings();
@@ -3363,7 +3427,7 @@ function piece2d(code) {
   return pics2d[style2d()]?.[code] || PIECES_2D[(code & E.BLACK ? 'b' : 'w') + LETTER[code & 7]];
 }
 const board2d = $('board2d');
-let anim2d = null, drag2d = null;
+let anim2d = null, drag2d = null, gone2d = -1; // gone2d: the mated king's square, left empty after he crumbles
 
 function square2d(sq) { return board2d.querySelector(`[data-sq="${sq}"]`); }
 function render2d() {
@@ -3393,6 +3457,7 @@ function render2d() {
       img.src = piece2d(code);
       img.alt = '';
       if (drag2d?.moving && drag2d.sq === sq) img.className = 'lift';
+      if (live && sq === gone2d) img.style.visibility = 'hidden';
       el.append(img);
     }
     if (targets.has(sq)) el.insertAdjacentHTML('beforeend', code ? '<span class="ring"></span>' : '<span class="dot"></span>');
@@ -3404,6 +3469,59 @@ function render2d() {
     if (img && a && z) img.animate([{ transform: `translate(${a.left - z.left}px, ${a.top - z.top}px)` }, { transform: 'none' }], { duration: 130 * SLOW, easing: 'ease-out' });
   }
   anim2d = null;
+}
+
+// The flat board's versions of the 3D effects, drawn over the square: a captured piece turns to smoke or
+// falls in blood (settings.capture), and a mated king crumbles into embers and smoke.
+function fx2d(kind, sq, code, delay = 0) {
+  const cell = square2d(sq);
+  if (!cell || reduceMotion) return;
+  const r = cell.getBoundingClientRect(), s = r.width, layer = document.createElement('div'), done = [];
+  layer.className = 'fx2d';
+  Object.assign(layer.style, { left: r.left + 'px', top: r.top + 'px', width: s + 'px', height: s + 'px' });
+  document.body.append(layer);
+  const add = (el, frames, ms, wait = 0) => {
+    layer.append(el);
+    done.push(el.animate(frames, { duration: ms * SLOW, delay: (delay + wait) * SLOW, fill: 'both', easing: 'ease-out' }).finished);
+  };
+  const dot = (size, background) => { const i = document.createElement('i'); Object.assign(i.style, { width: size + 'px', height: size + 'px', margin: -size / 2 + 'px 0 0 ' + -size / 2 + 'px', background }); return i; };
+  const ghost = new Image();
+  ghost.src = piece2d(code); ghost.alt = '';
+  const puffs = (n, spread, ms) => {
+    for (let k = 0; k < n; k++) {
+      const dx = (Math.random() - 0.5) * s * spread, rise = s * (0.5 + Math.random() * 0.6);
+      add(dot(s * 0.55, 'radial-gradient(rgba(125,125,125,0.8), rgba(125,125,125,0) 70%)'), [
+        { transform: 'scale(0.3)', opacity: 0 },
+        { transform: `translate(${dx * 0.5}px, ${-rise * 0.3}px) scale(0.9)`, opacity: 0.75, offset: 0.25 },
+        { transform: `translate(${dx}px, ${-rise}px) scale(1.7)`, opacity: 0 }], ms * (0.8 + Math.random() * 0.4), Math.random() * 250);
+    }
+  };
+  if (kind === 'smoke') {
+    add(ghost, [{ opacity: 1, filter: 'none', transform: 'none' }, { opacity: 0, filter: 'blur(6px) grayscale(1)', transform: 'translateY(-25%) scale(1.15)' }], 900);
+    puffs(10, 0.8, 1400);
+  } else if (kind === 'blood') {
+    add(ghost, [{ transform: 'none', opacity: 1 }, { transform: 'rotate(80deg) translate(8%, 12%)', opacity: 1, offset: 0.45 }, { transform: 'rotate(90deg) translate(10%, 18%)', opacity: 0 }], 1000);
+    add(dot(s * 0.7, 'radial-gradient(rgba(130,8,8,0.85), rgba(130,8,8,0.6) 45%, rgba(130,8,8,0) 70%)'), [
+      { transform: 'scale(0)', opacity: 1 }, { transform: 'scale(1)', opacity: 1, offset: 0.2 }, { transform: 'scale(1.05)', opacity: 0 }], 1600);
+    for (let k = 0; k < 18; k++) {
+      const a = Math.random() * Math.PI * 2, d = s * (0.25 + Math.random() * 0.45), x = Math.cos(a) * d, y = Math.sin(a) * d - s * 0.2;
+      add(dot(s * (0.04 + Math.random() * 0.05), '#9a0c0c'), [
+        { transform: 'none', opacity: 1 }, { transform: `translate(${x}px, ${y}px)`, opacity: 1, offset: 0.5 },
+        { transform: `translate(${x * 1.2}px, ${y + s * 0.35}px)`, opacity: 0 }], 700 + Math.random() * 300);
+    }
+  } else {
+    add(ghost, [{ opacity: 1, filter: 'none', transform: 'none' },
+      { opacity: 0.9, filter: 'sepia(1) saturate(3) brightness(1.3)', transform: 'translateY(-4%)', offset: 0.3 },
+      { opacity: 0, filter: 'blur(8px) grayscale(1)', transform: 'translateY(-35%) scale(1.25)' }], 2400);
+    for (let k = 0; k < 26; k++) {
+      const x = (Math.random() - 0.5) * s * 0.7, y = -s * (0.4 + Math.random() * 0.9);
+      add(dot(s * (0.03 + Math.random() * 0.04), '#ffb347'), [
+        { transform: `translate(${x * 0.3}px, ${s * 0.1}px)`, opacity: 0 }, { opacity: 1, offset: 0.2 },
+        { transform: `translate(${x}px, ${y}px)`, opacity: 0 }], 1400 + Math.random() * 800, Math.random() * 900);
+    }
+    puffs(12, 1, 2200);
+  }
+  Promise.all(done).finally(() => layer.remove());
 }
 
 function sq2dAt(x, y) {
