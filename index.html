@@ -1488,7 +1488,7 @@ const SAMPLES = {
 const LEVEL = { slash: 0.55, slide: 0.32, ugh: 0.42, move: 0.5, capture: 0.55, castle: 0.5, check: 0.35, promote: 0.4, start: 0.35, end: 0.4, scream: 0.42 };
 // Every kind of sound has its own switch. Off by default: the wooden capture knock (the slash covers it).
 const SOUND_SWITCHES = [
-  ['taps', 'Piece taps', true], ['swoosh', 'Swooshes', true], ['slash', 'Sword slashes', true], ['knock', 'Capture knock', false],
+  ['taps', 'Piece taps', true], ['swoosh', 'Marble taps', true], ['slash', 'Sword slashes', true], ['knock', 'Capture knock', false],
   ['grunt', 'Grunts', true], ['scream', 'Screams', true], ['chimes', 'Check chimes', true], ['startend', 'Start and end', true]
 ];
 const soundOn = (k) => (settings.sfx?.[k] ?? SOUND_SWITCHES.find((x) => x[0] === k)[2]);
@@ -1552,6 +1552,23 @@ const sfx = (() => {
     src.start(t, Math.random() * 0.5, dur + 0.05);
     return src;
   }
+  // A marble piece set down on a stone board: a hard click with a short, bright, slightly ringing body
+  // (stone rings at a few inharmonic pitches that die away fast). Played when a piece sets off.
+  function marble() {
+    if (!ready()) return;
+    const t = ctx.currentTime, pitch = 0.9 + Math.random() * 0.2;
+    const src = noiseSource(t, 0.03), bp = ctx.createBiquadFilter(), g = ctx.createGain();
+    bp.type = 'bandpass'; bp.Q.value = 0.9; bp.frequency.value = 3200 * pitch;
+    env(g, t, 0.001, 0.55, 0.035);
+    src.connect(bp).connect(g).connect(master);
+    for (const [f, a, d] of [[1850, 0.16, 0.09], [2930, 0.11, 0.07], [4410, 0.07, 0.05], [6120, 0.04, 0.035]]) {
+      const o = ctx.createOscillator(), og = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f * pitch;
+      env(og, t, 0.0015, a, d);
+      o.connect(og).connect(master);
+      o.start(t); o.stop(t + d + 0.02);
+    }
+  }
   // Air rushing past: band-passed noise sweeping up, swelling then fading.
   function slide(seconds = 0.2) {
     if (!ready()) return;
@@ -1605,7 +1622,7 @@ const sfx = (() => {
   // A board sound or chime by name; quietly nothing if it hasn't loaded.
   function cue(kind) { if (ready()) sample(kind); }
   return {
-    unlock, slide, slash, ugh, cue,
+    unlock, slide, marble, slash, ugh, cue,
     get loaded() { return Object.fromEntries(Object.entries(decoded).map(([k, v]) => [k, v.length])); },
     get on() { return on; },
     set on(v) { on = v; try { localStorage.setItem('kingside.sound', v ? 'on' : 'off'); } catch {} }
@@ -1682,7 +1699,7 @@ function glide(piece, toSq, ms) {
 
 async function quietMove(piece, toSq, silent) {
   const dist = piece.position.distanceTo(sqPos(toSq));
-  if (!silent && soundOn('swoosh')) sfx.slide((140 + dist * 25) / 1000);
+  if (!silent && soundOn('swoosh')) sfx.marble();
   play(piece, 'idle', { time: Math.random() });
   const id = piece.userData.motion + 1;
   piece.userData.busy = true;
@@ -1697,7 +1714,7 @@ async function quietMove(piece, toSq, silent) {
 async function killMove(attacker, victim, toSq) {
   const dist = attacker.position.distanceTo(sqPos(toSq));
   const ms = Math.min(400, 175 + dist * 32);
-  if (soundOn('swoosh')) sfx.slide(ms / 1000);
+  if (soundOn('swoosh')) sfx.marble();
   const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
   victim.userData.motion++; // stop it if it was still sliding, and put it on its square
   victim.userData.lookUp = false; victim.userData.unlook?.();
@@ -3032,7 +3049,7 @@ function openPrefs() {
     box.checked = soundOn(key);
     box.onchange = () => {
       settings.sfx = { ...settings.sfx, [key]: box.checked }; saveSettings();
-      if (box.checked) ({ taps: () => sfx.cue('move'), swoosh: () => sfx.slide(0.3), slash: () => sfx.slash(), knock: () => sfx.cue('capture'),
+      if (box.checked) ({ taps: () => sfx.cue('move'), swoosh: () => sfx.marble(), slash: () => sfx.slash(), knock: () => sfx.cue('capture'),
         grunt: () => sfx.ugh(1), scream: () => sfx.cue('scream'), chimes: () => sfx.cue('check'), startend: () => sfx.cue('start') })[key]();
     };
     sounds.append(l);
