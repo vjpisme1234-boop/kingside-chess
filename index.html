@@ -1478,7 +1478,7 @@ function makeStaticPiece(code, sq) {
   piece.add(picker);
   pickers.push(picker);
   // Busts lose the head from the neck up, about three quarters of the way up the piece.
-  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut,
+  piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut, height,
     neck: model.getObjectByName('kingsideNeck') };
   pieceRoot.add(piece);
   return piece;
@@ -1745,8 +1745,8 @@ function turnTo(piece, yaw, ms) {
 function glide(piece, toSq, ms) {
   const id = ++piece.userData.motion, a = piece.position.clone(), b = sqPos(toSq);
   if (piece.userData.lookUp) { // stands up to move
-    piece.userData.lookUp = false; piece.userData.tilt.rotation.x = 0;
-    if (piece.userData.neck) piece.userData.neck.rotation.x = 0;
+    piece.userData.lookUp = false;
+    piece.userData.unlook?.();
   }
   piece.userData.sq = toSq;
   if (!piece.userData.static) piece.userData.char.rotation.y = angleTo(a, b);
@@ -2195,27 +2195,121 @@ function lookCurve(k) {
   const smooth = (x) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
   return k < 0.22 ? -0.22 * Math.sin((k / 0.22) * Math.PI / 2) : -0.22 + 1.22 * smooth((k - 0.22) / 0.78);
 }
+// Every piece bends back until its face points at the sky; set by lookPose(piece, f) with f from lookCurve.
+// Busts and girls bend smoothly through the neck (no cut, so nothing tears); rigged pieces turn the upper
+// spine, neck and head about the piece's own left-right axis (worked out from where it faces, not from the
+// bones' axes, which point every which way between rigs); the rest lean back a little.
 function piecesLookUp() {
   for (const piece of pieces.values()) {
-    const u = piece.userData, linear = (k) => k;
+    const u = piece.userData;
+    u.unlook?.();
+    const pose = lookPose(piece);
     u.lookUp = true;
     const wait = Math.random() * 500; // not all in lockstep
-    if (u.neck) {
-      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; u.neck.rotation.x = lookCurve(e) * Math.PI / 2; }, linear);
-    } else if (u.mixer && !u.beast) {
-      const bones = [];
-      u.char.traverse((o) => { if (o.isBone && /neck$/i.test(o.name)) bones.push([o, 0.55]); else if (o.isBone && isHeadBone(o)) bones.push([o, 0.85]); });
-      const base = bones.map(([b]) => b.quaternion.clone()), q = new THREE.Quaternion(), x = new THREE.Vector3(1, 0, 0);
-      tween(LOOK_UP_MS + wait, (e) => {
-        if (!u.lookUp) return false;
-        const f = lookCurve(e);
-        bones.forEach(([b, a], i) => b.quaternion.copy(base[i]).multiply(q.setFromAxisAngle(x, a * f)));
-      }, linear);
-    } else {
-      const tilt = u.tilt;
-      tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; tilt.rotation.x = -0.32 * lookCurve(e); }, linear);
-    }
+    tween(LOOK_UP_MS + wait, (e) => { if (!u.lookUp) return false; pose(lookCurve(e)); }, (k) => k);
   }
+}
+
+// Returns pose(f): f = 1 is face straight up, 0 standing as normal. u.unlook() puts the piece back.
+function lookPose(piece) {
+  const u = piece.userData;
+  piece.updateMatrixWorld(true);
+  if (u.static && u.neck) return neckBend(piece);
+  if (u.mixer && !u.beast) {
+    // fwd x up is the axis that turns the face from forward to up.
+    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(u.char.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
+    const axis = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+    let spine = null, neck = null, head = null;
+    u.char.traverse((o) => {
+      if (!o.isBone) return;
+      if (/spine\d*$/i.test(o.name)) spine = o; // the last (highest) spine bone
+      else if (/neck$/i.test(o.name)) neck ||= o;
+      else if (isHeadBone(o)) head ||= o;
+    });
+    const parts = [[spine, 0.2], [neck, 0.35], [head, 0.45]].filter(([b]) => b);
+    const total = parts.reduce((t, [, w]) => t + w, 0);
+    const bones = parts.map(([b, w]) => {
+      const local = axis.clone().applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()).invert());
+      return { b, base: b.quaternion.clone(), local, share: w / total };
+    });
+    const q = new THREE.Quaternion();
+    const pose = (f) => { for (const { b, base, local, share } of bones) b.quaternion.copy(base).multiply(q.setFromAxisAngle(local, share * f * Math.PI / 2)); };
+    u.unlook = () => { pose(0); u.unlook = null; };
+    return pose;
+  }
+  const tilt = u.tilt;
+  u.unlook = () => { tilt.rotation.x = 0; u.unlook = null; };
+  return (f) => { tilt.rotation.x = -0.32 * f; };
+}
+
+// Bends a static piece back through the neck. In the model's space (standing on y = 0, facing +z) every
+// point above the base of the neck turns about the neck by an angle that grows from 0 there to the full
+// turn at the chin, so the surface stays whole. The piece gets its own copies of the meshes it bends.
+function neckBend(piece) {
+  const u = piece.userData, model = u.tilt.children[0];
+  const neckY = u.cut * u.height, y0 = neckY - 0.08 * u.height, y1 = neckY + 0.02 * u.height;
+  const toModel = model.matrixWorld.clone().invert(), v = new THREE.Vector3(), n = new THREE.Vector3();
+  const meshes = [], copies = new Map(), centre = new THREE.Vector3();
+  let count = 0;
+  model.traverse((m) => { if (m.isMesh && !m.userData.outline) meshes.push(m); });
+  const jobs = [];
+  for (const m of meshes) {
+    const g = m.geometry, M = toModel.clone().multiply(m.matrixWorld), back = M.clone().invert();
+    const nM = new THREE.Matrix3().getNormalMatrix(M), nBack = new THREE.Matrix3().getNormalMatrix(back);
+    const pos = g.attributes.position, nor = g.attributes.normal, idx = [], base = [], baseN = [];
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(M);
+      if (v.y <= y0) continue;
+      idx.push(i); base.push(v.x, v.y, v.z);
+      if (nor) { n.fromBufferAttribute(nor, i).applyMatrix3(nM).normalize(); baseN.push(n.x, n.y, n.z); }
+      if (v.y > neckY) { centre.add(v); count++; }
+    }
+    if (!idx.length) continue;
+    // A float copy of the geometry for this piece (the originals are shared by every piece of the kind).
+    const copy = g.clone(), p2 = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) v.fromBufferAttribute(pos, i).toArray(p2, i * 3);
+    copy.setAttribute('position', new THREE.BufferAttribute(p2, 3));
+    if (nor) {
+      const n2 = new Float32Array(nor.count * 3);
+      for (let i = 0; i < nor.count; i++) n.fromBufferAttribute(nor, i).toArray(n2, i * 3);
+      copy.setAttribute('normal', new THREE.BufferAttribute(n2, 3));
+    }
+    copies.set(g, copy);
+    jobs.push({ copy, back, nBack, idx, base: new Float32Array(base), baseN: nor ? new Float32Array(baseN) : null });
+  }
+  if (count) centre.divideScalar(count);
+  // The outlines share each mesh's geometry, so they get the copy too.
+  const swapped = [];
+  model.traverse((m) => { if (m.isMesh && copies.has(m.geometry)) { swapped.push([m, m.geometry]); m.geometry = copies.get(m.geometry); m.frustumCulled = false; } });
+  const pz = centre.z;
+  let last = 0;
+  const pose = (f) => {
+    if (f === last) return;
+    last = f;
+    const turn = f * Math.PI / 2;
+    for (const { copy, back, nBack, idx, base, baseN } of jobs) {
+      const P = copy.attributes.position, N = copy.attributes.normal;
+      for (let j = 0; j < idx.length; j++) {
+        const y = base[j * 3 + 1], k = Math.min(1, (y - y0) / (y1 - y0)), w = k * k * (3 - 2 * k), a = turn * w, c = Math.cos(a), s = Math.sin(a);
+        const dy = y - y0, dz = base[j * 3 + 2] - pz;
+        v.set(base[j * 3], y0 + dy * c + dz * s, pz + dz * c - dy * s).applyMatrix4(back);
+        P.setXYZ(idx[j], v.x, v.y, v.z);
+        if (baseN) {
+          const ny = baseN[j * 3 + 1], nz = baseN[j * 3 + 2];
+          n.set(baseN[j * 3], ny * c + nz * s, nz * c - ny * s).applyMatrix3(nBack).normalize();
+          N.setXYZ(idx[j], n.x, n.y, n.z);
+        }
+      }
+      P.needsUpdate = true;
+      if (N) N.needsUpdate = true;
+    }
+  };
+  u.unlook = () => {
+    for (const [m, g] of swapped) m.geometry = g;
+    for (const c of copies.values()) c.dispose();
+    u.unlook = null;
+  };
+  return pose;
 }
 
 function gameOverCheck() {
