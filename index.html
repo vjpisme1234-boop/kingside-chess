@@ -1046,9 +1046,11 @@ const BUST_SETS = {
 // as gold, kept on both sides; yaw: the turn that makes it face +z (the people face +x in their files, the
 // horse already faces +z; beast: no neck bend, it leans back). Rooks stay the obelisk and the tower on their pedestals.
 // base: where the round base under the feet ends (it is cut off, so they stand on the board).
+// rig: a statue remade without a base and rigged on Magnific (file <set>-<piece>-rig.txt); look lists the
+// bones that tip the head back with their shares, arm is the right upper arm that swings on a capture.
 const FULL_BODIES = {
   egypt: {
-    [E.KING]: { neck: 0.785, base: 0.104, gold: 0.45 }, [E.QUEEN]: { neck: 0.77, base: 0.099 }, [E.BISHOP]: { neck: 0.785, base: 0.105 },
+    [E.KING]: { neck: 0.785, gold: 0.45, rig: { look: [['Spine_1', 0.2], ['Head_0', 0.2], ['Head_1', 0.6]], arm: 'bone_10' } }, [E.QUEEN]: { neck: 0.77, base: 0.099 }, [E.BISHOP]: { neck: 0.785, base: 0.105 },
     [E.KNIGHT]: { neck: 0.756, base: 0.099 }, [E.PAWN]: { neck: 0.84, base: 0.105 }
   },
   medieval: {
@@ -1158,22 +1160,22 @@ function loadBusts(name) {
   bustLoads[name] ||= (async () => {
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder), set = BUST_SETS[name];
     const kinds = Object.keys(BUST_NAMES).map(Number);
-    const file = (t) => `characters/${name}-${BUST_NAMES[t]}${FULL_BODIES[name][t] ? '-body' : ''}.txt`;
+    const file = (t) => `characters/${name}-${BUST_NAMES[t]}${FULL_BODIES[name][t] ? (FULL_BODIES[name][t].rig ? '-rig' : '-body') : ''}.txt`;
     const bufs = await Promise.all(kinds.map((t) => fetchBytes(file(t), () => {}).then(fromBase64)));
     for (let i = 0; i < kinds.length; i++) {
       const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene, full = FULL_BODIES[name][type];
       let box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3());
       const neckY = box.min.y + size.y * (full ? full.neck : 0.76);
-      if (full) {
+      if (full?.base) {
         dropBelow(src, box.min.y + size.y * full.base);
         box = new THREE.Box3().setFromObject(src); size = box.getSize(new THREE.Vector3());
       }
       const c = box.getCenter(new THREE.Vector3()), cut = (neckY - box.min.y) / size.y;
-      if (full && !full.beast) splitHead(src, neckY); // the horse leans back instead
+      if (full && !full.beast && !full.rig) splitHead(src, neckY); // the horse leans back instead
       const tall = full ? BODY_HEIGHTS[type] : BUST_HEIGHTS[type];
       const scale = Math.min(tall / size.y, 0.86 / Math.max(size.x, size.z));
       for (const color of [E.WHITE, E.BLACK]) {
-        const copy = src.clone(true);
+        const copy = full?.rig ? cloneSkinned(src) : src.clone(true);
         copy.traverse((o) => {
           if (!o.isMesh) return;
           o.material = sideMaterial(o.material, color, full?.gold || 0, set.shine || 1);
@@ -1183,7 +1185,7 @@ function loadBusts(name) {
         const statue = new THREE.Group(); statue.add(copy);
         statue.scale.setScalar(scale); statue.rotation.y = full?.yaw ?? -Math.PI / 2;
         const node = new THREE.Group(); node.add(statue);
-        staticSets[name][color | type] = { node, height: size.y * scale, bust: true, cut };
+        staticSets[name][color | type] = { node, height: size.y * scale, bust: true, cut, rig: full?.rig };
       }
     }
   })();
@@ -1379,7 +1381,7 @@ function makeStaticPiece(code, sq) {
   const char = new THREE.Group(), tilt = new THREE.Group();
   // Busts face the other side, like the fighters: White's turn to -z.
   const yaw = t.bust && !(code & E.BLACK) ? Math.PI : 0;
-  const model = t.node.clone(true);
+  const model = t.rig ? cloneSkinned(t.node) : t.node.clone(true);
   if (settings.outline !== false) addOutlines(model);
   tilt.add(model);
   char.add(tilt);
@@ -1393,7 +1395,7 @@ function makeStaticPiece(code, sq) {
   pickers.push(picker);
   // Busts lose the head from the neck up, about three quarters of the way up the piece.
   piece.userData = { sq, code, char, tilt, static: true, mixer: null, actions: {}, picker, facing: char.rotation.y, motion: 0, cut: t.cut, height,
-    neck: model.getObjectByName('kingsideNeck') };
+    neck: model.getObjectByName('kingsideNeck'), rig: t.rig };
   pieceRoot.add(piece);
   return piece;
 }
@@ -1690,6 +1692,7 @@ async function killMove(attacker, victim, toSq) {
   if (soundOn('swoosh')) sfx.slide(ms / 1000);
   const dir = sqPos(toSq).sub(attacker.position).setY(0).normalize();
   victim.userData.motion++; // stop it if it was still sliding, and put it on its square
+  victim.userData.lookUp = false; victim.userData.unlook?.();
   victim.position.copy(sqPos(victim.userData.sq));
   // Slash clip: wind-up starts at 0.24s, the cut lands around 0.46s; stretch that span over the slide.
   if (attacker.userData.static) {
@@ -1698,6 +1701,15 @@ async function killMove(attacker, victim, toSq) {
     tween(ms * 0.55, (e) => { tilt.rotation.x = -0.35 * e; }, easeOut)
       .then(() => tween(ms * 0.3, (e) => { tilt.rotation.x = -0.35 + 0.9 * e; }))
       .then(() => tween(90, (e) => { tilt.rotation.x = 0.55 * (1 - e); }));
+    // A rigged statue also raises its right arm high and brings it down on the strike.
+    if (attacker.userData.rig) {
+      attacker.userData.lookUp = false; attacker.userData.unlook?.();
+      const arm = turnBones(attacker, [[rigBone(attacker.userData, attacker.userData.rig.arm), 1]], 1, 'unswing');
+      tween(ms * 0.55, (e) => { arm(2.4 * e); }, easeOut)
+        .then(() => tween(ms * 0.3, (e) => { arm(2.4 - 2.1 * e); }))
+        .then(() => tween(260, (e) => { arm(0.3 * (1 - e)); }))
+        .then(() => attacker.userData.unswing?.());
+    }
   } else if (attacker.userData.beast) {
     const tilt = attacker.userData.tilt;
     tween(ms * 0.6, (e) => { tilt.rotation.x = -0.75 * e; }, easeOut)
@@ -2128,11 +2140,9 @@ function piecesLookUp() {
 function lookPose(piece) {
   const u = piece.userData;
   piece.updateMatrixWorld(true);
+  if (u.rig) return turnBones(piece, u.rig.look.map(([name, w]) => [rigBone(u, name), w]), Math.PI / 2, 'unlook');
   if (u.static && u.neck) return neckBend(piece);
   if (u.mixer && !u.beast) {
-    // fwd x up is the axis that turns the face from forward to up.
-    const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(u.char.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
-    const axis = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
     let spine = null, neck = null, head = null;
     u.char.traverse((o) => {
       if (!o.isBone) return;
@@ -2140,20 +2150,33 @@ function lookPose(piece) {
       else if (/neck$/i.test(o.name)) neck ||= o;
       else if (isHeadBone(o)) head ||= o;
     });
-    const parts = [[spine, 0.2], [neck, 0.35], [head, 0.45]].filter(([b]) => b);
-    const total = parts.reduce((t, [, w]) => t + w, 0);
-    const bones = parts.map(([b, w]) => {
-      const local = axis.clone().applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()).invert());
-      return { b, base: b.quaternion.clone(), local, share: w / total };
-    });
-    const q = new THREE.Quaternion();
-    const pose = (f) => { for (const { b, base, local, share } of bones) b.quaternion.copy(base).multiply(q.setFromAxisAngle(local, share * f * Math.PI / 2)); };
-    u.unlook = () => { pose(0); u.unlook = null; };
-    return pose;
+    return turnBones(piece, [[spine, 0.2], [neck, 0.35], [head, 0.45]], Math.PI / 2, 'unlook');
   }
   const tilt = u.tilt;
   u.unlook = () => { tilt.rotation.x = 0; u.unlook = null; };
   return (f) => { tilt.rotation.x = -0.32 * f; };
+}
+
+const rigBone = (u, name) => { let found = null; u.char.traverse((o) => { if (!found && o.isBone && o.name.endsWith(name)) found = o; }); return found; };
+
+// Turns bones about the piece's own left-right axis (fwd x up, which turns forward towards up), whatever
+// way each bone's own axes point. parts: [bone, share of the turn]. Returns pose(f): f = 1 is the full
+// turn; u[undo]() puts the bones back.
+function turnBones(piece, parts, full, undo) {
+  const u = piece.userData;
+  piece.updateMatrixWorld(true);
+  const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(u.char.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
+  const axis = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  parts = parts.filter(([b]) => b);
+  const total = parts.reduce((t, [, w]) => t + w, 0);
+  const bones = parts.map(([b, w]) => {
+    const local = axis.clone().applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()).invert());
+    return { b, base: b.quaternion.clone(), local, share: w / total };
+  });
+  const q = new THREE.Quaternion();
+  const pose = (f) => { for (const { b, base, local, share } of bones) b.quaternion.copy(base).multiply(q.setFromAxisAngle(local, share * f * full)); };
+  u[undo] = () => { pose(0); u[undo] = null; };
+  return pose;
 }
 
 // Bends a static piece back through the neck and upper back. In the model's space (standing on y = 0,
