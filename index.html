@@ -379,6 +379,7 @@
         <label class="choice"><input type="radio" name="style" id="stClassic" value="classic"><span><b>Classic</b><em>Your original chess set</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stEgypt" value="egypt"><span><b>Egyptian</b><em>Pharaohs, Anubis, mummies</em></span></label>
         <label class="choice"><input type="radio" name="style" id="stMedieval" value="medieval"><span><b>Medieval</b><em>Marble busts, gold crowns</em></span></label>
+        <label class="choice"><input type="radio" name="style" id="stGirls" value="girls"><span><b>Girls</b><em>Gothic dress and black dress</em></span></label>
       </div>
     </fieldset>
     <fieldset id="clockSet">
@@ -1223,8 +1224,8 @@ function applyBackground() {
     : bg.css;
 }
 
-const STYLE_TITLES = { classic: 'classic', egypt: 'Egyptian', medieval: 'Medieval' };
-const staticSets = { classic: classicTypes, egypt: {}, medieval: {} };   // style -> code -> { node, height }
+const STYLE_TITLES = { classic: 'classic', egypt: 'Egyptian', medieval: 'Medieval', girls: 'Girls' };
+const staticSets = { classic: classicTypes, egypt: {}, medieval: {}, girls: {} };   // style -> code -> { node, height }
 const bustLoads = {};
 
 function loadBusts(name) {
@@ -1276,7 +1277,167 @@ function loadBusts(name) {
   return bustLoads[name];
 }
 
-function loadStyle(name) { return name === 'classic' ? loadClassic() : loadBusts(name); }
+// ------------------------------------------------------------------ girls set
+
+// The user's own girl models (FBX from Downloads, decimated), kept in their real colours. Both stand in a
+// T-pose in their files, so the arms are lowered once on load and the result is baked into plain meshes;
+// after that they work like the busts (static, the head splits off at the neck). Each side stands on a
+// disc, ivory or charcoal, with the piece's symbol, since the same girl plays several pieces.
+const GIRL_MODELS = {
+  // The black-dress girl is rigged (one copy of the skeleton per mesh part) and faces +z.
+  dress: { file: 'characters/girl-dress.txt', neck: 0.855, arms: { bones: 'ludovisions_FC1_', down: 76, bend: 10 } },
+  // The gothic girl isn't rigged and faces -x; her arms are bent down about the shoulders in the mesh.
+  gothic: { file: 'characters/girl-gothic.txt', neck: 0.84, turn: -Math.PI / 2,
+    mesh: { side: 'z', shoulder: 0.09, at: 0.785, reach: 0.05, sleeve: 0.165, below: 0.62, angle: 70 } }
+};
+const GIRL_CAST = { [E.KING]: 'gothic', [E.QUEEN]: 'dress', [E.BISHOP]: 'gothic', [E.KNIGHT]: 'dress', [E.ROOK]: 'gothic', [E.PAWN]: 'dress' };
+const GIRL_HEIGHTS = { [E.PAWN]: 1.0, [E.KNIGHT]: 1.12, [E.BISHOP]: 1.24, [E.ROOK]: 1.18, [E.QUEEN]: 1.34, [E.KING]: 1.44 };
+const GIRL_GLYPHS = { [E.PAWN]: '\u265F', [E.KNIGHT]: '\u265E', [E.BISHOP]: '\u265D', [E.ROOK]: '\u265C', [E.QUEEN]: '\u265B', [E.KING]: '\u265A' };
+const GIRL_DISC = 0.05;
+
+// Turns a bone about a world axis.
+function turnBoneWorld(bone, axis, angle) {
+  const pq = bone.parent.getWorldQuaternion(new THREE.Quaternion());
+  bone.quaternion.premultiply(pq.clone().invert().multiply(new THREE.Quaternion().setFromAxisAngle(axis, angle)).multiply(pq));
+  bone.updateMatrixWorld(true);
+}
+
+// Bends an unrigged T-pose's arms down about the shoulders. side is the axis the arms run along; the
+// rest are fractions of the height: shoulder (half the shoulder width), at (shoulder height), reach (how
+// far the bend fades in), sleeve (anything further out than this is arm, however low), below (lowest arm).
+function bendArmsDown(root, { side, shoulder, at, reach, sleeve, below, angle }) {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root), H = box.max.y - box.min.y, y0 = box.min.y + H * at;
+  const sw = H * shoulder, outer = sw + H * reach, low = box.min.y + H * below, far = H * sleeve, turn = angle * Math.PI / 180;
+  const v = new THREE.Vector3(), n = new THREE.Vector3();
+  root.traverse((m) => {
+    if (!m.isMesh) return;
+    const g = m.geometry, inv = m.matrixWorld.clone().invert(), nm = new THREE.Matrix3().getNormalMatrix(m.matrixWorld), back = new THREE.Matrix3().getNormalMatrix(inv);
+    const count = g.attributes.position.count, pos = new Float32Array(count * 3), nor = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      v.fromBufferAttribute(g.attributes.position, i).applyMatrix4(m.matrixWorld);
+      n.fromBufferAttribute(g.attributes.normal, i).applyMatrix3(nm).normalize();
+      const l = v[side], a = Math.abs(l);
+      if (a > sw && (v.y > low || a > far)) {
+        const s = Math.sign(l), w = Math.min(1, (a - sw) / (outer - sw)), k = w * w * (3 - 2 * w), ca = Math.cos(turn * k), sa = Math.sin(turn * k);
+        const dl = l - s * sw, dy = v.y - y0;
+        v[side] = s * sw + dl * ca + s * dy * sa; v.y = y0 - s * dl * sa + dy * ca;
+        const nl = n[side], ny = n.y; n[side] = nl * ca + s * ny * sa; n.y = -s * nl * sa + ny * ca;
+      }
+      v.applyMatrix4(inv).toArray(pos, i * 3); n.applyMatrix3(back).normalize().toArray(nor, i * 3);
+    }
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  });
+}
+
+// Bakes every mesh (skinned ones in their current pose) into plain meshes whose geometry is in root's
+// space, all directly under one group, so splitHead and the head cut can work on them.
+function flattenModel(root) {
+  root.updateMatrixWorld(true);
+  const out = new THREE.Group(), p = new THREE.Vector3(), t = new THREE.Vector3(), nn = new THREE.Vector3();
+  root.traverse((m) => {
+    if (!m.isMesh) return;
+    if (m.isSkinnedMesh) m.skeleton.update();
+    const g = m.geometry, count = g.attributes.position.count, pos = new Float32Array(count * 3), nor = new Float32Array(count * 3);
+    const nm = new THREE.Matrix3().getNormalMatrix(m.matrixWorld);
+    for (let i = 0; i < count; i++) {
+      p.fromBufferAttribute(g.attributes.position, i); nn.fromBufferAttribute(g.attributes.normal, i);
+      if (m.isSkinnedMesh) {
+        // The normal is carried through the pose as a short step off the surface.
+        t.copy(p).addScaledVector(nn, 0.01);
+        m.applyBoneTransform(i, p); m.applyBoneTransform(i, t);
+        p.applyMatrix4(m.matrixWorld); t.applyMatrix4(m.matrixWorld); nn.subVectors(t, p).normalize();
+      } else {
+        p.applyMatrix4(m.matrixWorld); nn.applyMatrix3(nm).normalize();
+      }
+      p.toArray(pos, i * 3); nn.toArray(nor, i * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    if (g.attributes.uv) geo.setAttribute('uv', g.attributes.uv);
+    geo.setIndex(g.index || [...Array(count).keys()]);
+    for (const grp of g.groups) geo.addGroup(grp.start, grp.count, grp.materialIndex);
+    const mesh = new THREE.Mesh(geo, m.material);
+    mesh.name = m.name;
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    out.add(mesh);
+  });
+  return out;
+}
+
+// The disc each girl stands on: the side's colour with the piece's symbol in the other colour.
+function girlDisc(type, color) {
+  const cv = document.createElement('canvas'), n = 256;
+  cv.width = cv.height = n;
+  const cx = cv.getContext('2d'), white = color === E.WHITE;
+  cx.fillStyle = white ? '#e9dcc0' : '#26221f'; cx.fillRect(0, 0, n, n);
+  cx.strokeStyle = white ? '#9c8456' : '#8a7448'; cx.lineWidth = 10;
+  cx.beginPath(); cx.arc(n / 2, n / 2, n / 2 - 12, 0, Math.PI * 2); cx.stroke();
+  // The symbol sits at the front edge, clear of her feet, so it shows from straight above too.
+  cx.fillStyle = white ? '#2a2420' : '#efe4cc'; cx.font = `${n * 0.3}px "Segoe UI Symbol", "Noto Sans Symbols 2", serif`;
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillText(GIRL_GLYPHS[type] + '\uFE0E', n / 2, n * 0.8);
+  const map = new THREE.CanvasTexture(cv);
+  map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4;
+  const rim = new THREE.MeshStandardMaterial({ color: white ? 0xd8c8a6 : 0x2c2724, roughness: 0.5, metalness: white ? 0.05 : 0.3 });
+  const top = new THREE.MeshStandardMaterial({ map, roughness: 0.55 });
+  const disc = new THREE.Group();
+  const side = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.42, GIRL_DISC, 48, 1, true), rim);
+  side.position.y = GIRL_DISC / 2;
+  const face = new THREE.Mesh(new THREE.CircleGeometry(0.4, 48), top);
+  face.rotation.x = -Math.PI / 2; face.position.y = GIRL_DISC;
+  // The piece turns White's girls to face Black, so their discs turn back: every symbol reads from White's side.
+  if (white) face.rotation.z = Math.PI;
+  disc.add(side, face);
+  side.receiveShadow = face.receiveShadow = true;
+  return disc;
+}
+
+const girlModels = {};   // name -> flattened model, standing on y = 0, centred, facing +z
+let girlLoad = null;
+function loadGirls() {
+  girlLoad ||= (async () => {
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    await Promise.all(Object.entries(GIRL_MODELS).map(async ([name, spec]) => {
+      const src = (await loader.parseAsync(fromBase64(await fetchBytes(spec.file, () => {})), '')).scene;
+      src.updateMatrixWorld(true);
+      if (spec.arms) {
+        const { bones, down, bend } = spec.arms, Z = new THREE.Vector3(0, 0, 1), X = new THREE.Vector3(1, 0, 0);
+        const all = (n) => { const out = []; src.traverse((o) => { if (o.isBone && o.name.replace(/_\d+$/, '') === bones + n) out.push(o); }); return out; };
+        for (const [side, sgn] of [['L_', -1], ['R_', 1]]) {
+          for (const b of all(side + 'Upperarm')) turnBoneWorld(b, Z, sgn * down * Math.PI / 180);
+          for (const b of all(side + 'Forearm')) turnBoneWorld(b, X, -bend * Math.PI / 180);
+        }
+      }
+      if (spec.mesh) bendArmsDown(src, spec.mesh);
+      const turned = new THREE.Group();
+      turned.add(src); turned.rotation.y = spec.turn || 0;
+      const model = flattenModel(turned);
+      // Stood on the floor, centred, then the head split off at the neck so it can look up and come off.
+      const box = new THREE.Box3().setFromObject(model), c = box.getCenter(new THREE.Vector3()), H = box.max.y - box.min.y;
+      for (const m of model.children) m.geometry.translate(-c.x, -box.min.y, -c.z);
+      splitHead(model, H * spec.neck);
+      girlModels[name] = { model, height: H };
+    }));
+    for (const type of Object.keys(GIRL_CAST).map(Number)) {
+      const { model, height: H } = girlModels[GIRL_CAST[type]], scale = GIRL_HEIGHTS[type] / H;
+      for (const color of [E.WHITE, E.BLACK]) {
+        const fig = model.clone(true);
+        fig.scale.setScalar(scale); fig.position.y = GIRL_DISC;
+        const node = new THREE.Group();
+        node.add(girlDisc(type, color), fig);
+        const height = GIRL_DISC + GIRL_HEIGHTS[type];
+        staticSets.girls[color | type] = { node, height, bust: true, cut: (GIRL_DISC + GIRL_HEIGHTS[type] * GIRL_MODELS[GIRL_CAST[type]].neck) / height };
+      }
+    }
+  })();
+  girlLoad.catch(() => { girlLoad = null; });
+  return girlLoad;
+}
+
+function loadStyle(name) { return name === 'classic' ? loadClassic() : name === 'girls' ? loadGirls() : loadBusts(name); }
 
 // Switches every piece on the board to the chosen style.
 async function setStyle(next) {
@@ -1408,7 +1569,7 @@ const SOUND_SWITCHES = [
 ];
 const soundOn = (k) => (settings.sfx?.[k] ?? SOUND_SWITCHES.find((x) => x[0] === k)[2]);
 // Who screams instead of grunting when killed: the female pieces of each set.
-const FEMALE = { fighters: [E.QUEEN, E.BISHOP, E.ROOK], classic: [E.QUEEN], egypt: [E.QUEEN, E.BISHOP], medieval: [E.QUEEN] };
+const FEMALE = { fighters: [E.QUEEN, E.BISHOP, E.ROOK], classic: [E.QUEEN], egypt: [E.QUEEN, E.BISHOP], medieval: [E.QUEEN], girls: [E.KING, E.QUEEN, E.BISHOP, E.KNIGHT, E.ROOK, E.PAWN] };
 const sampleBytes = Object.values(SAMPLES).flat().map((c) => fetchBytes('sounds/' + c.file + '.mp3', () => {}).catch(() => null));
 
 const sfx = (() => {
@@ -2550,7 +2711,7 @@ function refreshSetup() {
 }
 for (const id of ['mdAi', 'mdOnline']) $(id).addEventListener('change', refreshSetup);
 // Picking a style swaps the pieces on the board behind the card right away.
-const STYLE_INPUTS = { fighters: 'stFighters', classic: 'stClassic', egypt: 'stEgypt', medieval: 'stMedieval' };
+const STYLE_INPUTS = { fighters: 'stFighters', classic: 'stClassic', egypt: 'stEgypt', medieval: 'stMedieval', girls: 'stGirls' };
 for (const [next, id] of Object.entries(STYLE_INPUTS)) $(id).addEventListener('change', () => {
   queueMicrotask(showView); // the flat board switches sets at once
   settings.style = next;
