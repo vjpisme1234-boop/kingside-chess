@@ -1552,19 +1552,26 @@ const sfx = (() => {
     src.start(t, Math.random() * 0.5, dur + 0.05);
     return src;
   }
-  // A marble piece set down on a stone board: a hard click with a short, bright, slightly ringing body
-  // (stone rings at a few inharmonic pitches that die away fast). Played when a piece sets off.
+  // A marble piece cracked down on a stone board: a loud, sharp crack (a wide burst of noise with a hard
+  // edge), a low thump for weight, and a short stone ring at a few inharmonic pitches. Played when a
+  // piece sets off.
   function marble() {
     if (!ready()) return;
-    const t = ctx.currentTime, pitch = 0.9 + Math.random() * 0.2;
-    const src = noiseSource(t, 0.03), bp = ctx.createBiquadFilter(), g = ctx.createGain();
-    bp.type = 'bandpass'; bp.Q.value = 0.9; bp.frequency.value = 3200 * pitch;
-    env(g, t, 0.001, 0.55, 0.035);
-    src.connect(bp).connect(g).connect(master);
-    for (const [f, a, d] of [[1850, 0.16, 0.09], [2930, 0.11, 0.07], [4410, 0.07, 0.05], [6120, 0.04, 0.035]]) {
+    const t = ctx.currentTime, pitch = 0.92 + Math.random() * 0.16;
+    const crack = noiseSource(t, 0.05), hp = ctx.createBiquadFilter(), shelf = ctx.createBiquadFilter(), cg = ctx.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 900;
+    shelf.type = 'peaking'; shelf.frequency.value = 2600 * pitch; shelf.Q.value = 0.8; shelf.gain.value = 9;
+    env(cg, t, 0.0007, 1.1, 0.045);
+    crack.connect(hp).connect(shelf).connect(cg).connect(master);
+    const thump = ctx.createOscillator(), tg = ctx.createGain();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(190 * pitch, t); thump.frequency.exponentialRampToValueAtTime(85, t + 0.07);
+    env(tg, t, 0.001, 0.55, 0.09);
+    thump.connect(tg).connect(master); thump.start(t); thump.stop(t + 0.11);
+    for (const [f, a, d] of [[1250, 0.2, 0.08], [2080, 0.16, 0.065], [3370, 0.1, 0.05], [5100, 0.05, 0.035]]) {
       const o = ctx.createOscillator(), og = ctx.createGain();
       o.type = 'sine'; o.frequency.value = f * pitch;
-      env(og, t, 0.0015, a, d);
+      env(og, t, 0.001, a, d);
       o.connect(og).connect(master);
       o.start(t); o.stop(t + d + 0.02);
     }
