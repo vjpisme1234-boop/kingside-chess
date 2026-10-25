@@ -403,6 +403,9 @@
     </fieldset>
     <fieldset id="onlineSet" hidden>
       <legend>Games you can join</legend>
+      <div class="code-row" id="nameRow" hidden>
+        <input id="nameInput" maxlength="24" autocomplete="nickname" placeholder="Your name" aria-label="Your name, shown to your friend">
+      </div>
       <ul class="lobby" id="lobbyList"><li class="empty-row">Looking for games…</li></ul>
       <div class="code-row">
         <input id="codeInput" maxlength="5" autocomplete="off" spellcheck="false" placeholder="CODE" aria-label="Game code">
@@ -2440,9 +2443,96 @@ const online = { db: null, user: null, me: null, canWrite: null, ready: false, g
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// On the public site (no claude.ai) games go through Supabase instead, behind the same small interface the
+// page uses: doc(path).get/set/update/delete/onSnapshot and collection(...).orderBy(...).limit(n).onSnapshot.
+// Players there are anonymous: a random id kept on this device plus the name typed on the setup card.
+// The anon key is public by design; the tables only allow what the game needs (see the kingside-chess project).
+const SUPA = {
+  url: 'https://xrurginsvmigmynhktuo.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhydXJnaW5zdm1pZ215bmhrdHVvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI5NDQ4MDUsImV4cCI6MjEwODUyMDgwNX0.Sw_7-x1tzXYp2-80-LcYqvS3RZVNvFLWyEUEvkeGpnw'
+};
+async function supabaseOnline() {
+  if (!SUPA.url) return null;
+  const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm');
+  const sb = createClient(SUPA.url, SUPA.key, { auth: { persistSession: false } });
+  const fail = (error) => Object.assign(new Error(error.message), { code: 'unavailable' });
+  const snapOf = (row) => ({ exists: !!row, data: () => row?.doc });
+  const tag = () => Math.random().toString(36).slice(2);
+  const doc = (path) => {
+    const code = path.split('/')[1];
+    const get = async () => {
+      const { data, error } = await sb.from('games').select('doc').eq('code', code).maybeSingle();
+      if (error) throw fail(error);
+      return snapOf(data);
+    };
+    return {
+      get,
+      async set(d) { const { error } = await sb.from('games').insert({ code, doc: d }); if (error) throw fail(error); },
+      async update(patch) { const { error } = await sb.rpc('game_patch', { p_code: code, p_patch: patch }); if (error) throw fail(error); },
+      async delete() { const { error } = await sb.from('games').delete().eq('code', code); if (error) throw fail(error); },
+      // Two friends joining the same code in the same second is rare enough to let the later write win.
+      async acquire() { return { acquired: true }; },
+      onSnapshot(cb, onErr) {
+        let live = true;
+        const ch = sb.channel(`game-${code}-${tag()}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'games', filter: `code=eq.${code}` },
+            (e) => { if (live) cb(snapOf(e.eventType === 'DELETE' ? null : e.new)); })
+          .subscribe((status) => {
+            if (!live) return;
+            if (status === 'SUBSCRIBED') get().then((snap) => live && cb(snap), (e) => live && onErr?.(e));
+            else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { live = false; sb.removeChannel(ch); onErr?.({ code: 'unavailable' }); }
+          });
+        return () => { live = false; sb.removeChannel(ch); };
+      }
+    };
+  };
+  // The lobby reloads the newest games whenever any game changes.
+  const collection = () => ({ orderBy: () => ({ limit: (n) => ({ onSnapshot(cb, onErr) {
+    let live = true, timer = 0;
+    const load = async () => {
+      const { data, error } = await sb.from('games').select('doc').order('created_at', { ascending: false }).limit(n);
+      if (!live) return;
+      if (error) onErr?.(error); else cb({ docs: data.map((r) => ({ data: () => r.doc })) });
+    };
+    const ch = sb.channel('lobby-' + tag())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'games' }, () => { clearTimeout(timer); timer = setTimeout(load, 300); })
+      .subscribe((status) => { if (live && status === 'SUBSCRIBED') load(); });
+    return () => { live = false; clearTimeout(timer); sb.removeChannel(ch); };
+  } }) }) });
+  let id = null, name = '';
+  try { id = localStorage.getItem('kingside.playerId'); name = localStorage.getItem('kingside.playerName') || ''; } catch {}
+  if (!id) { id = crypto.randomUUID(); try { localStorage.setItem('kingside.playerId', id); } catch {} }
+  const user = {
+    id: async () => id,
+    can: async () => true,
+    async profiles(ids) {
+      const { data } = await sb.from('players').select('id,name').in('id', ids);
+      const out = {};
+      for (const r of data || []) out[r.id] = { name: r.name };
+      return out;
+    }
+  };
+  const setName = async (next) => {
+    name = next.trim().slice(0, 24);
+    try { localStorage.setItem('kingside.playerName', name); } catch {}
+    await sb.from('players').upsert({ id, name });
+  };
+  if (name) setName(name).catch(() => {});
+  return { db: { doc, collection }, user, setName, name: () => name };
+}
+
 async function initOnline() {
-  if (!window.claude?.use) return;
-  const [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+  let db, user;
+  if (window.claude?.use) [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]);
+  else {
+    const pub = await supabaseOnline();
+    if (!pub) return;
+    ({ db, user } = pub);
+    online.public = pub;
+    $('nameRow').hidden = false;
+    $('nameInput').value = pub.name();
+    $('nameInput').addEventListener('change', () => { pub.setName($('nameInput').value).catch(() => {}); online.names = {}; });
+  }
   online.db = db; online.user = user;
   if (user) {
     online.me = await user.id();
@@ -2453,7 +2543,7 @@ async function initOnline() {
 }
 
 function onlineBlocker() {
-  if (!online.db || !online.user) return 'Online play needs this page opened on claude.ai while signed in.';
+  if (!online.db || !online.user) return SUPA.url ? 'Online play couldn\'t connect. Check your connection and reopen this card.' : 'Online play needs this page opened on claude.ai while signed in.';
   if (!online.me) return 'Online play needs you signed in to claude.ai.';
   if (online.canWrite === false) return 'You can watch games, but to play, the owner has to share this page with you as an Editor.';
   return '';
