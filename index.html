@@ -1045,17 +1045,51 @@ const BUST_SETS = {
 // chin is, as a share of the statue's height (the head splits off there); gold: the saturation that counts
 // as gold, kept on both sides; yaw: the turn that makes it face +z (the people face +x in their files, the
 // horse already faces +z; beast: no neck bend, it leans back). Rooks stay the obelisk and the tower on their pedestals.
+// base: where the round base under the feet ends (it is cut off, so they stand on the board).
 const FULL_BODIES = {
   egypt: {
-    [E.KING]: { neck: 0.785, gold: 0.45 }, [E.QUEEN]: { neck: 0.77 }, [E.BISHOP]: { neck: 0.785 },
-    [E.KNIGHT]: { neck: 0.756 }, [E.PAWN]: { neck: 0.84 }
+    [E.KING]: { neck: 0.785, base: 0.104, gold: 0.45 }, [E.QUEEN]: { neck: 0.77, base: 0.099 }, [E.BISHOP]: { neck: 0.785, base: 0.105 },
+    [E.KNIGHT]: { neck: 0.756, base: 0.099 }, [E.PAWN]: { neck: 0.84, base: 0.105 }
   },
   medieval: {
-    [E.KING]: { neck: 0.83, gold: 0.3 }, [E.QUEEN]: { neck: 0.84, gold: 0.3 }, [E.BISHOP]: { neck: 0.865 },
-    [E.KNIGHT]: { neck: 0.72, yaw: 0, beast: true }, [E.PAWN]: { neck: 0.82 }
+    [E.KING]: { neck: 0.83, base: 0.102, gold: 0.3 }, [E.QUEEN]: { neck: 0.84, base: 0.099, gold: 0.3 }, [E.BISHOP]: { neck: 0.80, base: 0.102 },
+    [E.KNIGHT]: { neck: 0.72, base: 0.102, yaw: 0, beast: true }, [E.PAWN]: { neck: 0.82, base: 0.106 }
   }
 };
 const BODY_HEIGHTS = { [E.PAWN]: 1.0, [E.KNIGHT]: 1.12, [E.BISHOP]: 1.26, [E.QUEEN]: 1.34, [E.KING]: 1.44 };
+// Drops every triangle lying wholly below y (in src's space), such as a statue's base, and the vertices
+// only they used (so bounding boxes start at the feet).
+function dropBelow(src, y) {
+  src.updateMatrixWorld(true);
+  const v = new THREE.Vector3();
+  src.traverse((m) => {
+    if (!m.isMesh) return;
+    const g = m.geometry, pos = g.attributes.position, idx = g.index;
+    const above = (k) => v.fromBufferAttribute(pos, k).applyMatrix4(m.matrixWorld).y >= y;
+    const groups = g.groups.length ? g.groups : [{ start: 0, count: idx.count, materialIndex: 0 }];
+    const keep = [], kept = [];
+    for (const grp of groups) {
+      const start = keep.length;
+      for (let i = grp.start; i < Math.min(idx.count, grp.start + grp.count); i += 3) {
+        const a = idx.getX(i), b = idx.getX(i + 1), c = idx.getX(i + 2);
+        if (above(a) || above(b) || above(c)) keep.push(a, b, c);
+      }
+      kept.push({ start, count: keep.length - start, materialIndex: grp.materialIndex });
+    }
+    const remap = new Map();
+    for (const k of keep) if (!remap.has(k)) remap.set(k, remap.size);
+    const geo = new THREE.BufferGeometry();
+    for (const [name, attr] of Object.entries(g.attributes)) {
+      const n = attr.itemSize, out = new Float32Array(remap.size * n);
+      for (const [from, to] of remap) for (let c = 0; c < n; c++) out[to * n + c] = attr.getComponent(from, c);
+      geo.setAttribute(name, new THREE.BufferAttribute(out, n));
+    }
+    geo.setIndex(keep.map((k) => remap.get(k)));
+    for (const grp of kept) geo.addGroup(grp.start, grp.count, grp.materialIndex);
+    m.geometry = geo;
+  });
+}
+
 // Moves the triangles above neckY onto their own meshes inside a 'neck' group that sits at the neck, so
 // the head can turn on it (rotation.x tips the face back until it looks up at the sky).
 function splitHead(src, neckY) {
@@ -1128,9 +1162,14 @@ function loadBusts(name) {
     const bufs = await Promise.all(kinds.map((t) => fetchBytes(file(t), () => {}).then(fromBase64)));
     for (let i = 0; i < kinds.length; i++) {
       const type = kinds[i], src = (await loader.parseAsync(bufs[i], '')).scene, full = FULL_BODIES[name][type];
-      const box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
-      const cut = full ? full.neck : 0.76;
-      if (full && !full.beast) splitHead(src, box.min.y + size.y * cut); // the horse leans back instead
+      let box = new THREE.Box3().setFromObject(src), size = box.getSize(new THREE.Vector3());
+      const neckY = box.min.y + size.y * (full ? full.neck : 0.76);
+      if (full) {
+        dropBelow(src, box.min.y + size.y * full.base);
+        box = new THREE.Box3().setFromObject(src); size = box.getSize(new THREE.Vector3());
+      }
+      const c = box.getCenter(new THREE.Vector3()), cut = (neckY - box.min.y) / size.y;
+      if (full && !full.beast) splitHead(src, neckY); // the horse leans back instead
       const tall = full ? BODY_HEIGHTS[type] : BUST_HEIGHTS[type];
       const scale = Math.min(tall / size.y, 0.86 / Math.max(size.x, size.z));
       for (const color of [E.WHITE, E.BLACK]) {
@@ -2154,13 +2193,13 @@ function neckBend(piece) {
     jobs.push({ copy, back, nBack, idx, base: new Float32Array(base), baseN: nor ? new Float32Array(baseN) : null });
   }
   // The head's centre is the median of what's above the chin (a staff or spear held up beside it is only a
-  // few points). Staffs and spears are held out to the side, so the bend fades out from 1.2 to 2 head
+  // few points). Staffs and spears are held out to the side, so the bend fades out from 2 to 3 head
   // half-widths left or right of the head (not front to back: a crown or hair leaning back bends whole).
   const median = (k) => { const a = []; for (let i = k; i < heads.length; i += 2) a.push(heads[i]); a.sort((x, y) => x - y); return a[a.length >> 1] || 0; };
   const px = median(0), pz0 = median(1);
   const dists = []; for (let i = 0; i < heads.length; i += 2) dists.push(Math.abs(heads[i] - px));
   dists.sort((x, y) => x - y);
-  const r = dists[Math.floor(dists.length * 0.9)] || 0.1, near = r * 1.2, far = r * 2, L = y1 - y0;
+  const r = dists[Math.floor(dists.length * 0.6)] || 0.1, near = r * 2, far = r * 3, L = y1 - y0;
   // The outlines share each mesh's geometry, so they get the copy too.
   const swapped = [];
   model.traverse((m) => { if (m.isMesh && copies.has(m.geometry)) { swapped.push([m, m.geometry]); m.geometry = copies.get(m.geometry); m.frustumCulled = false; } });
