@@ -2011,6 +2011,84 @@ function victoryWave(color) {
   }
 }
 
+// Checkmate: the beaten king disintegrates, like Magnific's "Disintegration Effect" template. His
+// triangles become loose fragments (from the crown down) that glow like embers, shrink, spin away on a
+// drift that rises, and fade out. Each fragment keeps the king's own material, so it keeps its colours.
+const DUST_MS = 3200;
+function disintegrate(piece) {
+  piece.updateMatrixWorld(true);
+  const u = piece.userData, box = new THREE.Box3().setFromObject(u.char), H = Math.max(0.01, box.max.y - box.min.y);
+  const uT = { value: 0 }, parts = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+  u.char.traverse((m) => {
+    if (!m.isMesh || m.userData.outline || !m.visible) return;
+    const g = m.geometry, pos = g.attributes.position, nor = g.attributes.normal, uv = g.attributes.uv;
+    const idx = g.index ? (i) => g.index.getX(i) : (i) => i, count = g.index ? g.index.count : pos.count;
+    const groups = g.groups.length ? g.groups : [{ start: 0, count, materialIndex: 0 }];
+    const nm = new THREE.Matrix3().getNormalMatrix(m.matrixWorld), mats = [].concat(m.material);
+    const at = (k, out) => { out.fromBufferAttribute(pos, k); if (m.isSkinnedMesh) m.applyBoneTransform(k, out); return out.applyMatrix4(m.matrixWorld); };
+    for (const grp of groups) {
+      const P = [], N = [], UV = [], C = [], R = [], D = [];
+      for (let i = grp.start; i < Math.min(count, grp.start + grp.count); i += 3) {
+        const ks = [idx(i), idx(i + 1), idx(i + 2)];
+        at(ks[0], a); at(ks[1], b); at(ks[2], c);
+        const mid = a.clone().add(b).add(c).divideScalar(3);
+        const out = new THREE.Vector3(mid.x - piece.position.x, 0, mid.z - piece.position.z).normalize();
+        const rand = [out.x * 0.5 + (Math.random() - 0.5) * 0.7, 0.2 + Math.random() * 0.5, out.z * 0.5 + (Math.random() - 0.5) * 0.7];
+        const delay = (1 - (mid.y - box.min.y) / H) * 1.5 + Math.random() * 0.35;
+        [a, b, c].forEach((v, j) => {
+          P.push(v.x, v.y, v.z); C.push(mid.x, mid.y, mid.z); R.push(...rand); D.push(delay);
+          if (nor) { n.fromBufferAttribute(nor, ks[j]).applyMatrix3(nm).normalize(); N.push(n.x, n.y, n.z); }
+          if (uv) UV.push(uv.getX(ks[j]), uv.getY(ks[j]));
+        });
+      }
+      if (!P.length) continue;
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      if (N.length) geo.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+      if (UV.length) geo.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2));
+      geo.setAttribute('aCenter', new THREE.Float32BufferAttribute(C, 3));
+      geo.setAttribute('aRand', new THREE.Float32BufferAttribute(R, 3));
+      geo.setAttribute('aDelay', new THREE.Float32BufferAttribute(D, 1));
+      const src = mats[grp.materialIndex] || mats[0], mat = src.clone(), before = src.onBeforeCompile;
+      mat.transparent = true; mat.depthWrite = true; mat.side = THREE.DoubleSide;
+      mat.onBeforeCompile = (shader, r) => {
+        before?.call(src, shader, r);
+        shader.uniforms.uT = uT;
+        shader.vertexShader = 'uniform float uT;\nattribute vec3 aCenter;\nattribute vec3 aRand;\nattribute float aDelay;\nvarying float vDust;\n' +
+          shader.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+            float k = clamp( ( uT - aDelay ) / 1.2, 0.0, 1.0 );
+            vDust = k;
+            float ang = k * 6.0 * ( aRand.y + 0.3 );
+            vec3 d = transformed - aCenter;
+            float cs = cos( ang ), sn = sin( ang );
+            d = vec3( d.x * cs - d.z * sn, d.y * cs + d.x * sn * 0.5, d.z * cs + d.x * sn );
+            transformed = aCenter + d * ( 1.0 - k * 0.85 )
+              + aRand * k * 1.1 + vec3( 0.0, 0.9, 0.0 ) * k * k
+              + vec3( sin( aCenter.y * 23.0 + uT * 3.0 ), 0.0, cos( aCenter.x * 19.0 + uT * 2.0 ) ) * 0.06 * k;`);
+        shader.fragmentShader = 'varying float vDust;\n' + shader.fragmentShader
+          .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+            totalEmissiveRadiance += vec3( 1.0, 0.55, 0.18 ) * smoothstep( 0.0, 0.08, vDust ) * ( 1.0 - smoothstep( 0.25, 0.8, vDust ) ) * 2.2;`)
+          .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+            gl_FragColor.a *= 1.0 - smoothstep( 0.45, 1.0, vDust );`);
+      };
+      mat.customProgramCacheKey = () => (src.customProgramCacheKey?.() || src.uuid) + ':dust';
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.frustumCulled = false;
+      parts.push(mesh);
+      scene.add(mesh);
+    }
+  });
+  piece.visible = false;
+  let t = 0;
+  effects.push({ update(dt) {
+    t += dt;
+    uT.value = t;
+    if (t * 1000 < DUST_MS) return true;
+    for (const m of parts) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+    return false;
+  } });
+}
+
 function selectedPiece() { return selected >= 0 ? pieces.get(selected) : null; }
 
 // ------------------------------------------------------------------ game
@@ -2301,8 +2379,12 @@ async function playMove(m, animate = true) {
   updateHud();
   if (game.over) {
     if (!animate) { showEnd(); return; }
-    if (game.over.kind === 'mate') setTimeout(() => victoryWave(game.over.winner), 500);
-    setTimeout(showEnd, 1500);
+    if (game.over.kind === 'mate') {
+      const king = [...pieces.values()].find((pc) => pc.userData.code === ((game.over.winner ^ E.BLACK) | E.KING));
+      if (king) setTimeout(() => { if (game.over && pieces.get(king.userData.sq) === king) disintegrate(king); }, 600);
+      setTimeout(() => victoryWave(game.over.winner), 900);
+    }
+    setTimeout(showEnd, game.over.kind === 'mate' ? 600 + DUST_MS : 1500);
   }
 }
 
